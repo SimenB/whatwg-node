@@ -34,7 +34,9 @@
     "@typescript-eslint/naming-convention": "off",
     "@typescript-eslint/interface-name-prefix": "off",
     "@typescript-eslint/explicit-module-boundary-types": "off",
+    "@typescript-eslint/no-empty-object-type": "off",
     "default-param-last": "off",
+    "@typescript-eslint/ban-types": "off",
     "import/no-extraneous-dependencies": [
       "error",
       { "devDependencies": ["**/*.test.ts", "**/*.spec.ts"] }
@@ -62,8 +64,9 @@
     "packages/load/tests/loaders/schema",
     "website",
     "scripts",
-    "e2e/bun",
-    "e2e/deno"
+    "e2e",
+    "benchmarks",
+    "deno-jest.ts"
   ],
   "globals": {
     "BigInt": true

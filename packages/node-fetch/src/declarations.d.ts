@@ -1,5 +1,5 @@
 /* eslint-disable */
-declare module 'fast-url-parser' {
+declare module '@kamilkisiela/fast-url-parser' {
   class Url {
     static queryString: {
       parse(value: string): any;
@@ -29,4 +29,10 @@ declare module 'fast-url-parser' {
     query: string | any;
   }
   export = Url;
+}
+
+// TODO
+declare var libcurl: any;
+declare module 'scheduler/tracing' {
+  export type Interaction = any;
 }

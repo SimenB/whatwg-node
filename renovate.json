@@ -5,6 +5,10 @@
   "major": {
     "automerge": false
   },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
   "packageRules": [
     {
       "excludePackagePatterns": [
@@ -13,7 +17,11 @@
         "typedoc*",
         "^@theguild/",
         "@graphql-inspector/core",
-        "next"
+        "next",
+        "react",
+        "react-dom",
+        "@pulumi/*",
+        "husky"
       ],
       "matchPackagePatterns": ["*"],
       "matchUpdateTypes": ["minor", "patch"],

@@ -1,6 +1,6 @@
-import { exec } from 'child_process';
-import { promises as fsPromises } from 'fs';
-import { promisify } from 'util';
+import { exec } from 'node:child_process';
+import { promises as fsPromises } from 'node:fs';
+import { promisify } from 'node:util';
 
 export { fsPromises };
 export const execPromise = promisify(exec);
@@ -36,8 +36,8 @@ export async function waitForEndpoint(
         throw new Error(`⚠️ Endpoint not ready yet, response text includes "Vercel"`);
       }
 
-      if (lastResponseText.includes('Azure')) {
-        throw new Error(`⚠️ Endpoint not ready yet, response text includes "Azure"`);
+      if (lastResponseText.includes('<title>Microsoft')) {
+        throw new Error(`⚠️ Endpoint not ready yet, response text includes "<title>Microsoft"`);
       }
 
       console.log(`\t✅ Endpoint is ready!`);
@@ -66,32 +66,8 @@ export function env(name: string): string {
   return envVar;
 }
 
-export async function assertIndex(endpoint: string) {
+export async function assertGET(endpoint: string) {
   const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: {
-      accept: 'text/html',
-    },
-  });
-
-  const html = await response.text();
-
-  console.log(`ℹ️ Received for ${endpoint}: ${html}`);
-
-  const contentType = response.headers.get('Content-Type');
-  if (contentType == null || !contentType.startsWith('text/html')) {
-    throw new Error(`⚠️ Expected 'text/html', but received ${contentType} for ${response.url}`);
-  }
-
-  if (!html.includes('Platform Agnostic Server')) {
-    throw new Error(`⚠️ Failed to locate HTML; ${html}`);
-  }
-
-  console.log(`\t✅ Index page is available`);
-}
-
-export async function assertGreetings(endpoint: string) {
-  const response = await fetch(endpoint + '/greetings/pulumi', {
     method: 'GET',
     headers: {
       accept: 'application/json',
@@ -100,12 +76,12 @@ export async function assertGreetings(endpoint: string) {
 
   const text = await response.text();
 
-  console.log(`ℹ️ Received for ${endpoint + '/greetings/pulumi'}: ${text}`);
+  console.log(`ℹ️ Received for ${endpoint}: ${text}`);
 
   const contentType = response.headers.get('Content-Type');
   if (contentType == null || !contentType.startsWith('application/json')) {
     throw new Error(
-      `⚠️ Expected 'application/json', but received ${contentType} for ${response.url}`,
+      `⚠️ Expected Response's Content-Type to be 'application/json', but received ${contentType} for ${response.url}`,
     );
   }
 
@@ -116,18 +92,28 @@ export async function assertGreetings(endpoint: string) {
     throw new Error(`⚠️ Failed to parse JSON; ${text}`);
   }
 
-  if (json.message !== 'Hello pulumi!') {
-    throw new Error(`⚠️ Unexpected message for greetings; ${text}`);
+  if (json.method !== 'GET') {
+    throw new Error(`⚠️ Expected 'GET', but received ${json.method} for ${response.url}`);
   }
 
-  console.log(`\t✅ '/greetings/:name' is available`);
+  const headers = new Headers(json.headers);
+  const acceptValue = headers.get('accept');
+
+  if (!acceptValue?.startsWith('application/json')) {
+    throw new Error(
+      `⚠️ Expected Sent Request's 'accept' to be 'application/json', but received ${acceptValue} for ${response.url}`,
+    );
+  }
+
+  console.log(`\t✅ GET is available`);
 }
 
-export async function assertBye(endpoint: string) {
-  const response = await fetch(endpoint + '/bye', {
+export async function assertPOST(endpoint: string) {
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Accept: 'application/json',
     },
     body: JSON.stringify({
       name: 'pulumi',
@@ -136,7 +122,7 @@ export async function assertBye(endpoint: string) {
 
   const text = await response.text();
 
-  console.log(`ℹ️ Received for ${endpoint + '/bye'}: ${text}`);
+  console.log(`ℹ️ Received for ${endpoint}: ${text}`);
 
   const contentType = response.headers.get('Content-Type');
   if (contentType == null || !contentType.startsWith('application/json')) {
@@ -152,20 +138,31 @@ export async function assertBye(endpoint: string) {
     throw new Error(`⚠️ Failed to parse JSON; ${text}`);
   }
 
-  if (json.message !== 'Bye pulumi!') {
-    throw new Error(`⚠️ Unexpected message for bye; ${text}`);
+  if (json.method !== 'POST') {
+    throw new Error(`⚠️ Expected 'POST', but received ${json.method} for ${response.url}`);
   }
 
-  console.log(`\t✅ '/bye' endpoint is available`);
+  const headers = new Headers(json.headers);
+  const acceptValue = headers.get('accept');
+
+  if (!acceptValue?.startsWith('application/json')) {
+    throw new Error(
+      `⚠️ Expected Sent Request's 'accept' to be 'application/json', but received ${acceptValue} for ${response.url}`,
+    );
+  }
+
+  if (json.reqText !== '{"name":"pulumi"}') {
+    throw new Error(
+      `⚠️ Expected '{"name":"pulumi"}', but received ${json.reqText} for ${response.url}`,
+    );
+  }
+
+  console.log(`\t✅ POST is available`);
 }
 
 export async function assertDeployedEndpoint(url: string) {
   await waitForEndpoint(url, 5, 10000);
-  const results = await Promise.allSettled([
-    assertIndex(url),
-    assertGreetings(url),
-    assertBye(url),
-  ]);
+  const results = await Promise.allSettled([assertGET(url), assertPOST(url)]);
   let failed = false;
   results.forEach(result => {
     if (result.status === 'rejected') {

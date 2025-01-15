@@ -1,6 +1,9 @@
-import { Readable } from 'stream';
-import { PonyfillBlob } from '../src/Blob';
-import { PonyfillBody } from '../src/Body';
+import { Buffer } from 'node:buffer';
+import { Readable } from 'node:stream';
+import { describe, expect, it, jest } from '@jest/globals';
+import { PonyfillBlob } from '../src/Blob.js';
+import { PonyfillBody } from '../src/Body.js';
+import { PonyfillTextDecoder } from '../src/TextEncoderDecoder.js';
 
 const exampleData = {
   data: {
@@ -16,7 +19,7 @@ const examples = {
 };
 
 function runExamples(fn: (body: PonyfillBody) => void | Promise<void>) {
-  const exampleTypes = Object.keys(examples);
+  const exampleTypes = Object.keys(examples) as (keyof typeof examples)[];
   exampleTypes.forEach(exampleName => {
     const example = examples[exampleName];
     exampleTypes.forEach(toType => {
@@ -49,5 +52,39 @@ describe('Body', () => {
       expect(result).toBe('hello world');
       expect(body.blob).not.toHaveBeenCalled();
     });
+  });
+  it('works with empty responses', async () => {
+    const body = new PonyfillBody(null);
+    const result = await body.text();
+    expect(result).toBe('');
+  });
+  it('works with custom decoding', async () => {
+    const body = new PonyfillBody('hello world');
+    const buf = await body.bytes();
+    const decoder = new PonyfillTextDecoder('utf-8');
+    const result = decoder.decode(buf);
+    expect(result).toBe('hello world');
+  });
+
+  it('throws a TypeError if the body is unable to parse as FormData', async () => {
+    const formStr =
+      '--Boundary_with_capital_letters\r\n' +
+      'Content-Type: application/json\r\n' +
+      'Content-Disposition: form-data; name="does_this_work"\r\n' +
+      '\r\n' +
+      'YES\r\n' +
+      '--Boundary_with_capital_letters-Random junk';
+
+    const body = new PonyfillBody(
+      new PonyfillBlob([formStr], {
+        type: 'multipart/form-data; boundary=Boundary_with_capital_letters',
+      }),
+    );
+    try {
+      await body.formData();
+      expect(true).toBe(false);
+    } catch (e) {
+      expect(e).toBeInstanceOf(TypeError);
+    }
   });
 });

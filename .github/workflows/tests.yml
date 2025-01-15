@@ -1,4 +1,4 @@
-name: Tests
+name: test
 
 on:
   push:
@@ -8,47 +8,56 @@ on:
 
 env:
   NODE_OPTIONS: --max-old-space-size=4096
+  NODE_NO_WARNINGS: 1
+  CI: true
 
 jobs:
   prettier-check:
-    name: 🧹 Prettier Check
+    name: prettier
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Master
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+      - name: Install Required Libraries
+        run: sudo apt update && sudo apt install -y libcurl4-openssl-dev libssl-dev
       - name: Setup env
         uses: the-guild-org/shared-config/setup@main
         with:
-          nodeVersion: 18
+          nodeVersion: 22
       - name: Prettier Check
         run: yarn prettier:check
   lint:
-    name: Lint
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Master
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+      - name: Install Required Libraries
+        run: sudo apt update && sudo apt install -y libcurl4-openssl-dev libssl-dev
       - name: Setup env
         uses: the-guild-org/shared-config/setup@main
         with:
-          nodeVersion: 18
+          nodeVersion: 22
       - name: ESLint
         run: yarn lint
 
-  build:
-    name: Type Check
+  type-check:
+    name: type check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Master
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+      - name: Install Required Libraries
+        run: sudo apt update && sudo apt install -y libcurl4-openssl-dev libssl-dev
       - name: Setup env
         uses: the-guild-org/shared-config/setup@main
         with:
-          nodeVersion: 18
+          nodeVersion: 22
       - name: Type Check
         run: yarn ts:check
-  test:
-    name: Unit Test on Node ${{matrix.node-version}}
+
+  unit:
+    name: unit / node ${{matrix.node-version}}
     runs-on: ubuntu-latest
     services:
       httpbin:
@@ -57,37 +66,94 @@ jobs:
           - 8888:80
     strategy:
       matrix:
-        node-version: [14, 16, 18]
+        node-version: [18, 20, 22, 23]
       fail-fast: false
     steps:
       - name: Checkout Master
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+      - name: Install Required Libraries
+        run: sudo apt update && sudo apt install -y libcurl4-openssl-dev libssl-dev
       - name: Setup env
         uses: the-guild-org/shared-config/setup@main
         with:
           nodeVersion: ${{ matrix.node-version }}
       - name: Cache Jest
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: .cache/jest
           key: ${{ runner.os }}-${{matrix.node-version}}-jest-${{ hashFiles('yarn.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{matrix.node-version}}-jest-
-      - name: Test
-        run: yarn test --ci
-        env:
-          CI: true
-  test_esm:
-    name: ESM Test
+      - name: Unit Tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 5
+          command: yarn test --ci
+      - name: Leak Tests
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 5
+          command: yarn test:leaks --ci
+
+  unit-bun:
+    name: unit / bun
     runs-on: ubuntu-latest
+    services:
+      httpbin:
+        image: kennethreitz/httpbin
+        ports:
+          - 8888:80
     steps:
       - name: Checkout Master
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+      - name: Install Required Libraries
+        run: sudo apt update && sudo apt install -y libcurl4-openssl-dev libssl-dev
       - name: Setup env
         uses: the-guild-org/shared-config/setup@main
         with:
-          nodeVersion: 18
+          nodeVersion: 22
+      - name: Test
+        run: yarn test:bun --ci
+
+  unit-deno:
+    name: unit / deno
+    runs-on: ubuntu-latest
+    services:
+      httpbin:
+        image: kennethreitz/httpbin
+        ports:
+          - 8888:80
+    steps:
+      - name: Checkout Master
+        uses: actions/checkout@v4
+      - name: Install Required Libraries
+        run: sudo apt update && sudo apt install -y libcurl4-openssl-dev libssl-dev
+      - name: Setup env
+        uses: the-guild-org/shared-config/setup@main
+        with:
+          nodeVersion: 22
+      - name: Test
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 10
+          max_attempts: 5
+          command: yarn test:deno
+
+  esm:
+    name: esm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Master
+        uses: actions/checkout@v4
+      - name: Install Required Libraries
+        run: sudo apt update && sudo apt install -y libcurl4-openssl-dev libssl-dev
+      - name: Setup env
+        uses: the-guild-org/shared-config/setup@main
+        with:
+          nodeVersion: 22
       - name: Build Packages
         run: yarn build
       - name: Test ESM
-        run: node scripts/test-esm.mjs
+        run: yarn esm:check

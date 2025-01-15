@@ -1,4 +1,4 @@
-import { join } from 'path';
+import { join } from 'node:path';
 import {
   assertDeployedEndpoint,
   DeploymentConfiguration,
@@ -69,7 +69,7 @@ export function createAwsLambdaDeployment(): DeploymentConfiguration<{
         'func',
         {
           role: lambdaRole.arn,
-          runtime: 'nodejs14.x',
+          runtime: 'nodejs16.x',
           handler: 'index.handler',
           code: new pulumi.asset.AssetArchive({
             'index.js': new pulumi.asset.FileAsset(join(__dirname, '../dist/index.js')),
@@ -86,12 +86,7 @@ export function createAwsLambdaDeployment(): DeploymentConfiguration<{
             eventHandler: func,
           },
           {
-            path: '/greetings/{name}',
-            method: 'GET',
-            eventHandler: func,
-          },
-          {
-            path: '/bye',
+            path: '/',
             method: 'POST',
             eventHandler: func,
           },

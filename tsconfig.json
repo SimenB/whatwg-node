@@ -3,7 +3,7 @@
     "outDir": "dist",
     "baseUrl": ".",
 
-    "target": "es2018",
+    "target": "es2022",
     "module": "esnext",
     "moduleResolution": "node",
     "lib": ["esnext"],
@@ -14,8 +14,8 @@
     "sourceMap": true,
     "declaration": true,
     "downlevelIteration": true,
-
-    "suppressImplicitAnyIndexErrors": true,
+    "incremental": true,
+    "exactOptionalPropertyTypes": true,
 
     "skipLibCheck": false,
 
@@ -25,13 +25,15 @@
     "noFallthroughCasesInSwitch": true,
     "noPropertyAccessFromIndexSignature": false,
     "paths": {
+      "@whatwg-node/cookie-store": ["packages/cookie-store/src/index.ts"],
       "@whatwg-node/server": ["packages/server/src/index.ts"],
-      "@whatwg-node/router": ["packages/router/src/index.ts"],
       "@whatwg-node/node-fetch": ["packages/node-fetch/src/index.ts"],
+      "@whatwg-node/events": ["packages/events/src/index.ts"],
+      "@whatwg-node/disposablestack": ["packages/disposablestack/src/index.ts"],
       "@e2e/*": ["e2e/*/src/index.ts"],
       "fetchache": ["packages/fetchache/src/index.ts"]
     }
   },
-  "include": ["packages", "e2e"],
-  "exclude": ["**/node_modules", "**/test-files", "**/dist", "e2e/bun", "e2e/deno"]
+  "include": ["packages", "examples", "uwsUtils.d.ts", "scheduler-tracing.d.ts"],
+  "exclude": ["**/node_modules", "**/test-files", "**/dist", "**/e2e", "**/benchmark"]
 }

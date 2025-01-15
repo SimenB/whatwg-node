@@ -1,98 +1,372 @@
-/* eslint-disable @typescript-eslint/ban-types */
-import { Request as PonyfillRequestCtor } from '@whatwg-node/fetch';
+import { AsyncDisposableStack, DisposableSymbols } from '@whatwg-node/disposablestack';
+import * as DefaultFetchAPI from '@whatwg-node/fetch';
 import {
+  OnRequestHook,
+  OnResponseEventPayload,
+  OnResponseHook,
+  ServerAdapterPlugin,
+} from './plugins/types.js';
+import {
+  FetchAPI,
   FetchEvent,
   ServerAdapter,
   ServerAdapterBaseObject,
   ServerAdapterObject,
   ServerAdapterRequestHandler,
-} from './types';
+  type ServerAdapterInitialContext,
+} from './types.js';
 import {
+  completeAssign,
+  ensureDisposableStackRegisteredForTerminateEvents,
+  handleAbortSignalAndPromiseResponse,
+  handleErrorFromRequestHandler,
   isFetchEvent,
   isNodeRequest,
+  isolateObject,
+  isPromise,
   isRequestInit,
   isServerResponse,
+  iterateAsyncVoid,
   NodeRequest,
+  nodeRequestResponseMap,
   NodeResponse,
   normalizeNodeRequest,
   sendNodeResponse,
-} from './utils';
+  ServerAdapterRequestAbortSignal,
+} from './utils.js';
+import {
+  fakePromise,
+  getRequestFromUWSRequest,
+  isUWSResponse,
+  sendResponseToUwsOpts,
+  type UWSRequest,
+  type UWSResponse,
+} from './uwebsockets.js';
 
-async function handleWaitUntils(waitUntilPromises: Promise<unknown>[]) {
-  const waitUntils = await Promise.allSettled(waitUntilPromises);
-  waitUntils.forEach(waitUntil => {
-    if (waitUntil.status === 'rejected') {
-      console.error(waitUntil.reason);
-    }
-  });
+type RequestContainer = { request: Request };
+
+// Required for envs like nextjs edge runtime
+function isRequestAccessible(serverContext: any): serverContext is RequestContainer {
+  try {
+    return !!serverContext?.request;
+  } catch {
+    return false;
+  }
 }
+
+export interface ServerAdapterOptions<TServerContext> {
+  plugins?: ServerAdapterPlugin<TServerContext>[];
+  fetchAPI?: Partial<FetchAPI>;
+  /**
+   * Node.js only!
+   *
+   * If true, the server adapter will dispose itself when the process is terminated.
+   * If false, you have to dispose the server adapter by using the `dispose` method,
+   * or [Explicit Resource Management](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-2.html)
+   */
+  disposeOnProcessTerminate?: boolean;
+}
+
+const EMPTY_OBJECT = {};
 
 function createServerAdapter<
   TServerContext = {},
-  THandleRequest extends ServerAdapterRequestHandler<TServerContext> = ServerAdapterRequestHandler<TServerContext>,
+  THandleRequest extends
+    ServerAdapterRequestHandler<TServerContext> = ServerAdapterRequestHandler<TServerContext>,
 >(
   serverAdapterRequestHandler: THandleRequest,
-  RequestCtor?: typeof Request,
+  options?: ServerAdapterOptions<TServerContext>,
 ): ServerAdapter<TServerContext, ServerAdapterBaseObject<TServerContext, THandleRequest>>;
 function createServerAdapter<
   TServerContext,
   TBaseObject extends ServerAdapterBaseObject<TServerContext>,
 >(
   serverAdapterBaseObject: TBaseObject,
-  RequestCtor?: typeof Request,
+  options?: ServerAdapterOptions<TServerContext>,
 ): ServerAdapter<TServerContext, TBaseObject>;
 function createServerAdapter<
   TServerContext = {},
-  THandleRequest extends ServerAdapterRequestHandler<TServerContext> = ServerAdapterRequestHandler<TServerContext>,
+  THandleRequest extends
+    ServerAdapterRequestHandler<TServerContext> = ServerAdapterRequestHandler<TServerContext>,
   TBaseObject extends ServerAdapterBaseObject<
     TServerContext,
     THandleRequest
   > = ServerAdapterBaseObject<TServerContext, THandleRequest>,
 >(
   serverAdapterBaseObject: TBaseObject | THandleRequest,
-  /**
-   * WHATWG Fetch spec compliant `Request` constructor.
-   */
-  RequestCtor = PonyfillRequestCtor,
+  options?: ServerAdapterOptions<TServerContext>,
 ): ServerAdapter<TServerContext, TBaseObject> {
-  const handleRequest =
+  const fetchAPI = {
+    ...DefaultFetchAPI,
+    ...options?.fetchAPI,
+  };
+  const givenHandleRequest =
     typeof serverAdapterBaseObject === 'function'
       ? serverAdapterBaseObject
       : serverAdapterBaseObject.handle;
 
+  const onRequestHooks: OnRequestHook<TServerContext & ServerAdapterInitialContext>[] = [];
+  const onResponseHooks: OnResponseHook<TServerContext & ServerAdapterInitialContext>[] = [];
+  const waitUntilPromises = new Set<PromiseLike<unknown>>();
+  let _disposableStack: AsyncDisposableStack | undefined;
+  function ensureDisposableStack() {
+    if (!_disposableStack) {
+      _disposableStack = new AsyncDisposableStack();
+      if (options?.disposeOnProcessTerminate) {
+        ensureDisposableStackRegisteredForTerminateEvents(_disposableStack);
+      }
+      _disposableStack.defer(() => {
+        if (waitUntilPromises.size > 0) {
+          return Promise.allSettled(waitUntilPromises).then(
+            () => {
+              waitUntilPromises.clear();
+            },
+            () => {
+              waitUntilPromises.clear();
+            },
+          );
+        }
+      });
+    }
+    return _disposableStack;
+  }
+
+  function waitUntil(promiseLike: PromiseLike<unknown>) {
+    // Ensure that the disposable stack is created
+    if (isPromise(promiseLike)) {
+      ensureDisposableStack();
+      waitUntilPromises.add(promiseLike);
+      promiseLike.then(
+        () => {
+          waitUntilPromises.delete(promiseLike);
+        },
+        err => {
+          console.error(`Unexpected error while waiting: ${err.message || err}`);
+          waitUntilPromises.delete(promiseLike);
+        },
+      );
+    }
+  }
+
+  if (options?.plugins != null) {
+    for (const plugin of options.plugins) {
+      if (plugin.onRequest) {
+        onRequestHooks.push(plugin.onRequest);
+      }
+      if (plugin.onResponse) {
+        onResponseHooks.push(plugin.onResponse);
+      }
+      const disposeFn = plugin[DisposableSymbols.dispose];
+      if (disposeFn) {
+        ensureDisposableStack().defer(disposeFn);
+      }
+      const asyncDisposeFn = plugin[DisposableSymbols.asyncDispose];
+      if (asyncDisposeFn) {
+        ensureDisposableStack().defer(asyncDisposeFn);
+      }
+      if (plugin.onDispose) {
+        ensureDisposableStack().defer(plugin.onDispose);
+      }
+    }
+  }
+
+  const handleRequest: ServerAdapterRequestHandler<TServerContext & ServerAdapterInitialContext> =
+    onRequestHooks.length > 0 || onResponseHooks.length > 0
+      ? function handleRequest(request, serverContext) {
+          let requestHandler: ServerAdapterRequestHandler<any> = givenHandleRequest;
+          let response: Response | undefined;
+          if (onRequestHooks.length === 0) {
+            return handleEarlyResponse();
+          }
+          let url =
+            (request as any)['parsedUrl'] ||
+            (new Proxy(EMPTY_OBJECT as URL, {
+              get(_target, prop, _receiver) {
+                url = new fetchAPI.URL(request.url, 'http://localhost');
+                return Reflect.get(url, prop, url);
+              },
+            }) as URL);
+          const onRequestHooksIteration$ = iterateAsyncVoid(
+            onRequestHooks,
+            (onRequestHook, stopEarly) =>
+              onRequestHook({
+                request,
+                setRequest(newRequest) {
+                  request = newRequest;
+                },
+                serverContext,
+                fetchAPI,
+                url,
+                requestHandler,
+                setRequestHandler(newRequestHandler) {
+                  requestHandler = newRequestHandler;
+                },
+                endResponse(newResponse) {
+                  response = newResponse;
+                  if (newResponse) {
+                    stopEarly();
+                  }
+                },
+              }),
+          );
+          function handleResponse(response: Response) {
+            if (onResponseHooks.length === 0) {
+              return response;
+            }
+            const onResponseHookPayload: OnResponseEventPayload<
+              TServerContext & ServerAdapterInitialContext
+            > = {
+              request,
+              response,
+              serverContext,
+              setResponse(newResponse) {
+                response = newResponse;
+              },
+              fetchAPI,
+            };
+            const onResponseHooksIteration$ = iterateAsyncVoid(onResponseHooks, onResponseHook =>
+              onResponseHook(onResponseHookPayload),
+            );
+            if (isPromise(onResponseHooksIteration$)) {
+              return onResponseHooksIteration$.then(() => response);
+            }
+            return response;
+          }
+          function handleEarlyResponse() {
+            if (!response) {
+              const response$ = requestHandler(request, serverContext);
+              if (isPromise(response$)) {
+                return response$.then(handleResponse);
+              }
+              return handleResponse(response$);
+            }
+            return handleResponse(response);
+          }
+          if (isPromise(onRequestHooksIteration$)) {
+            return onRequestHooksIteration$.then(handleEarlyResponse);
+          }
+          return handleEarlyResponse();
+        }
+      : givenHandleRequest;
+
+  // TODO: Remove this on the next major version
   function handleNodeRequest(nodeRequest: NodeRequest, ...ctx: Partial<TServerContext>[]) {
-    const serverContext = ctx.length > 1 ? completeAssign({}, ...ctx) : ctx[0];
-    const request = normalizeNodeRequest(nodeRequest, RequestCtor);
+    const serverContext = ctx.length > 1 ? completeAssign(...ctx) : ctx[0] || {};
+    // Ensure `waitUntil` is available in the server context
+    if (!serverContext.waitUntil) {
+      serverContext.waitUntil = waitUntil;
+    }
+    const request = normalizeNodeRequest(nodeRequest, fetchAPI);
     return handleRequest(request, serverContext);
   }
 
-  async function requestListener(
+  function handleNodeRequestAndResponse(
     nodeRequest: NodeRequest,
-    serverResponse: NodeResponse,
+    nodeResponseOrContainer: NodeResponse | { raw: NodeResponse },
     ...ctx: Partial<TServerContext>[]
   ) {
-    const waitUntilPromises: Promise<unknown>[] = [];
+    const nodeResponse: NodeResponse =
+      (nodeResponseOrContainer as any).raw || nodeResponseOrContainer;
+    nodeRequestResponseMap.set(nodeRequest, nodeResponse);
+    return handleNodeRequest(nodeRequest, ...ctx);
+  }
+
+  function requestListener(
+    nodeRequest: NodeRequest,
+    nodeResponse: NodeResponse,
+    ...ctx: Partial<TServerContext>[]
+  ) {
     const defaultServerContext = {
       req: nodeRequest,
-      res: serverResponse,
-      waitUntil(promise: Promise<void> | void) {
-        if (promise != null) {
-          waitUntilPromises.push(promise);
-        }
-      },
+      res: nodeResponse,
+      waitUntil,
     };
-    const response = await handleNodeRequest(nodeRequest, defaultServerContext as any, ...ctx);
-    if (response) {
-      await sendNodeResponse(response, serverResponse, nodeRequest);
-    } else {
-      await new Promise<void>(resolve => {
-        serverResponse.statusCode = 404;
-        serverResponse.once('end', resolve);
-        serverResponse.end();
-      });
+    let response$: Response | Promise<Response> | undefined;
+    try {
+      response$ = handleNodeRequestAndResponse(
+        nodeRequest,
+        nodeResponse,
+        defaultServerContext as any,
+        ...ctx,
+      );
+    } catch (err: any) {
+      response$ = handleErrorFromRequestHandler(err, fetchAPI.Response);
     }
-    if (waitUntilPromises.length > 0) {
-      await handleWaitUntils(waitUntilPromises);
+    if (isPromise(response$)) {
+      return response$
+        .catch((e: any) => handleErrorFromRequestHandler(e, fetchAPI.Response))
+        .then(response => sendNodeResponse(response, nodeResponse, nodeRequest))
+        .catch(err => {
+          console.error(`Unexpected error while handling request: ${err.message || err}`);
+        });
+    }
+    try {
+      return sendNodeResponse(response$, nodeResponse, nodeRequest);
+    } catch (err: any) {
+      console.error(`Unexpected error while handling request: ${err.message || err}`);
+    }
+  }
+
+  function handleUWS(res: UWSResponse, req: UWSRequest, ...ctx: Partial<TServerContext>[]) {
+    const defaultServerContext = {
+      res,
+      req,
+      waitUntil,
+    };
+    const filteredCtxParts = ctx.filter(partCtx => partCtx != null);
+    const serverContext =
+      filteredCtxParts.length > 0
+        ? completeAssign(defaultServerContext, ...ctx)
+        : defaultServerContext;
+
+    const signal = new ServerAdapterRequestAbortSignal();
+    const originalResEnd = res.end.bind(res);
+    let resEnded = false;
+    res.end = function (data: any) {
+      resEnded = true;
+      return originalResEnd(data);
+    };
+    const originalOnAborted = res.onAborted.bind(res);
+    originalOnAborted(function () {
+      signal.sendAbort();
+    });
+    res.onAborted = function (cb: () => void) {
+      signal.addEventListener('abort', cb);
+    };
+    const request = getRequestFromUWSRequest({
+      req,
+      res,
+      fetchAPI,
+      signal,
+    });
+    let response$: Response | Promise<Response> | undefined;
+    try {
+      response$ = handleRequest(request, serverContext);
+    } catch (err: any) {
+      response$ = handleErrorFromRequestHandler(err, fetchAPI.Response);
+    }
+    if (isPromise(response$)) {
+      return response$
+        .catch((e: any) => handleErrorFromRequestHandler(e, fetchAPI.Response))
+        .then(response => {
+          if (!signal.aborted && !resEnded) {
+            return sendResponseToUwsOpts(res, response, signal, fetchAPI);
+          }
+        })
+        .catch(err => {
+          console.error(
+            `Unexpected error while handling request: \n${err.stack || err.message || err}`,
+          );
+        });
+    }
+    try {
+      if (!signal.aborted && !resEnded) {
+        return sendResponseToUwsOpts(res, response$, signal, fetchAPI);
+      }
+    } catch (err: any) {
+      console.error(
+        `Unexpected error while handling request: \n${err.stack || err.message || err}`,
+      );
     }
   }
 
@@ -100,51 +374,59 @@ function createServerAdapter<
     if (!event.respondWith || !event.request) {
       throw new TypeError(`Expected FetchEvent, got ${event}`);
     }
-    const serverContext = ctx.length > 0 ? Object.assign({}, event, ...ctx) : event;
+    const filteredCtxParts = ctx.filter(partCtx => partCtx != null);
+    const serverContext =
+      filteredCtxParts.length > 0
+        ? completeAssign({}, event, ...filteredCtxParts)
+        : isolateObject(event);
     const response$ = handleRequest(event.request, serverContext);
     event.respondWith(response$);
   }
 
   function handleRequestWithWaitUntil(request: Request, ...ctx: Partial<TServerContext>[]) {
-    const serverContext = ctx.length > 1 ? completeAssign({}, ...ctx) : ctx[0] || {};
-    if (!('waitUntil' in serverContext)) {
-      const waitUntilPromises: Promise<void>[] = [];
-      const response$ = handleRequest(request, {
-        ...serverContext,
-        waitUntil(promise: Promise<void> | void) {
-          if (promise != null) {
-            waitUntilPromises.push(promise);
-          }
-        },
-      });
-      if (waitUntilPromises.length > 0) {
-        return handleWaitUntils(waitUntilPromises).then(() => response$);
-      }
-      return response$;
-    }
+    const filteredCtxParts: any[] = ctx.filter(partCtx => partCtx != null);
+    const serverContext =
+      filteredCtxParts.length > 1
+        ? completeAssign({}, ...filteredCtxParts)
+        : isolateObject(
+            filteredCtxParts[0],
+            filteredCtxParts[0] == null || filteredCtxParts[0].waitUntil == null
+              ? waitUntil
+              : undefined,
+          );
     return handleRequest(request, serverContext);
   }
 
-  const fetchFn: ServerAdapterObject<TServerContext, TBaseObject>['fetch'] = (
+  const fetchFn: ServerAdapterObject<TServerContext>['fetch'] = (
     input,
     ...maybeCtx: Partial<TServerContext>[]
   ) => {
     if (typeof input === 'string' || 'href' in input) {
       const [initOrCtx, ...restOfCtx] = maybeCtx;
       if (isRequestInit(initOrCtx)) {
-        return handleRequestWithWaitUntil(new RequestCtor(input, initOrCtx), ...restOfCtx);
+        const request = new fetchAPI.Request(input, initOrCtx);
+        const res$ = handleRequestWithWaitUntil(request, ...restOfCtx);
+        return handleAbortSignalAndPromiseResponse(res$, (initOrCtx as RequestInit)?.signal);
       }
-      return handleRequestWithWaitUntil(new RequestCtor(input), ...maybeCtx);
+      const request = new fetchAPI.Request(input);
+      return handleRequestWithWaitUntil(request, ...maybeCtx);
     }
-    return handleRequestWithWaitUntil(input, ...maybeCtx);
+    const res$ = handleRequestWithWaitUntil(input, ...maybeCtx);
+    return handleAbortSignalAndPromiseResponse(res$, (input as any)._signal);
   };
 
   const genericRequestHandler = (
-    input: Request | FetchEvent | NodeRequest | ({ request: Request } & Partial<TServerContext>),
+    input:
+      | Request
+      | FetchEvent
+      | NodeRequest
+      | ({ request: Request } & Partial<TServerContext>)
+      | UWSResponse,
     ...maybeCtx: Partial<TServerContext>[]
   ): Promise<Response> | Response | Promise<void> | void => {
     // If it is a Node request
     const [initOrCtxOrRes, ...restOfCtx] = maybeCtx;
+
     if (isNodeRequest(input)) {
       if (!isServerResponse(initOrCtxOrRes)) {
         throw new TypeError(`Expected ServerResponse, got ${initOrCtxOrRes}`);
@@ -152,12 +434,16 @@ function createServerAdapter<
       return requestListener(input, initOrCtxOrRes, ...restOfCtx);
     }
 
+    if (isUWSResponse(input)) {
+      return handleUWS(input, initOrCtxOrRes as any, ...restOfCtx);
+    }
+
     if (isServerResponse(initOrCtxOrRes)) {
       throw new TypeError('Got Node response without Node request');
     }
 
     // Is input a container object over Request?
-    if (typeof input === 'object' && 'request' in input) {
+    if (isRequestAccessible(input)) {
       // Is it FetchEvent?
       if (isFetchEvent(input)) {
         return handleEvent(input, ...maybeCtx);
@@ -171,16 +457,33 @@ function createServerAdapter<
     return fetchFn(input, ...maybeCtx);
   };
 
-  const adapterObj: ServerAdapterObject<TServerContext, TBaseObject> = {
-    handleRequest,
+  const adapterObj: ServerAdapterObject<TServerContext> = {
+    handleRequest: handleRequestWithWaitUntil,
     fetch: fetchFn,
     handleNodeRequest,
+    handleNodeRequestAndResponse,
     requestListener,
     handleEvent,
-    handle: genericRequestHandler as ServerAdapterObject<TServerContext, TBaseObject>['handle'],
+    handleUWS,
+    handle: genericRequestHandler as ServerAdapterObject<TServerContext>['handle'],
+    get disposableStack() {
+      return ensureDisposableStack();
+    },
+    [DisposableSymbols.asyncDispose]() {
+      if (_disposableStack && !_disposableStack.disposed) {
+        return _disposableStack.disposeAsync();
+      }
+      return fakePromise(undefined);
+    },
+    dispose() {
+      if (_disposableStack && !_disposableStack.disposed) {
+        return _disposableStack.disposeAsync();
+      }
+      return fakePromise(undefined);
+    },
   };
 
-  return new Proxy(genericRequestHandler, {
+  const serverAdapter = new Proxy(genericRequestHandler, {
     // It should have all the attributes of the handler function and the server instance
     has: (_, prop) => {
       return (
@@ -190,14 +493,14 @@ function createServerAdapter<
       );
     },
     get: (_, prop) => {
-      const adapterProp = adapterObj[prop];
+      const adapterProp = (adapterObj as any)[prop];
       if (adapterProp) {
         if (adapterProp.bind) {
           return adapterProp.bind(adapterObj);
         }
         return adapterProp;
       }
-      const handleProp = genericRequestHandler[prop];
+      const handleProp = (genericRequestHandler as any)[prop];
       if (handleProp) {
         if (handleProp.bind) {
           return handleProp.bind(genericRequestHandler);
@@ -205,44 +508,26 @@ function createServerAdapter<
         return handleProp;
       }
       if (serverAdapterBaseObject) {
-        const serverAdapterBaseObjectProp = serverAdapterBaseObject[prop];
+        const serverAdapterBaseObjectProp = (serverAdapterBaseObject as any)[prop];
         if (serverAdapterBaseObjectProp) {
           if (serverAdapterBaseObjectProp.bind) {
-            return serverAdapterBaseObjectProp.bind(serverAdapterBaseObject);
+            return function (...args: any[]) {
+              const returnedVal = (serverAdapterBaseObject as any)[prop](...args);
+              if (returnedVal === serverAdapterBaseObject) {
+                return serverAdapter;
+              }
+              return returnedVal;
+            };
           }
           return serverAdapterBaseObjectProp;
         }
       }
     },
-    apply(_, __, args: Parameters<ServerAdapterObject<TServerContext, TBaseObject>['handle']>) {
+    apply(_, __, args: Parameters<ServerAdapterObject<TServerContext>['handle']>) {
       return genericRequestHandler(...args);
     },
-  }) as any; // 😡
+  });
+  return serverAdapter as ServerAdapter<TServerContext, TBaseObject>;
 }
 
 export { createServerAdapter };
-
-// from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/assign#copying_accessors
-function completeAssign(target: any, ...sources: any[]) {
-  sources.forEach(source => {
-    if (source != null && typeof source === 'object') {
-      // modified Object.keys to Object.getOwnPropertyNames
-      // because Object.keys only returns enumerable properties
-      const descriptors = Object.getOwnPropertyNames(source).reduce((descriptors, key) => {
-        descriptors[key] = Object.getOwnPropertyDescriptor(source, key);
-        return descriptors;
-      }, {});
-
-      // By default, Object.assign copies enumerable Symbols, too
-      Object.getOwnPropertySymbols(source).forEach(sym => {
-        const descriptor = Object.getOwnPropertyDescriptor(source, sym);
-        if (descriptor!.enumerable) {
-          descriptors[sym] = descriptor;
-        }
-      });
-
-      Object.defineProperties(target, descriptors);
-    }
-  });
-  return target;
-}

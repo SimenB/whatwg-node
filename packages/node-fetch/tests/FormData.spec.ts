@@ -1,10 +1,11 @@
-import { Blob as NodeBlob } from 'buffer';
-import { PonyfillBlob } from '../src/Blob';
-import { PonyfillFile } from '../src/File';
-import { PonyfillFormData } from '../src/FormData';
-import { PonyfillRequest } from '../src/Request';
-import { PonyfillResponse } from '../src/Response';
-import { PonyfillURLSearchParams } from '../src/URLSearchParams';
+import { Blob as NodeBlob } from 'node:buffer';
+import { describe, expect, it } from '@jest/globals';
+import { PonyfillBlob } from '../src/Blob.js';
+import { PonyfillFile } from '../src/File.js';
+import { PonyfillFormData } from '../src/FormData.js';
+import { PonyfillRequest } from '../src/Request.js';
+import { PonyfillResponse } from '../src/Response.js';
+import { PonyfillURLSearchParams } from '../src/URLSearchParams.js';
 
 describe('Form Data', () => {
   it('Consume empty URLSearchParams as PonyfillFormData', async () => {
@@ -53,9 +54,9 @@ describe('Form Data', () => {
     const ab = await new PonyfillRequest('http://a', {
       method: 'post',
       body: form,
-    }).arrayBuffer();
+    }).bytes();
 
-    expect(ab.byteLength).toBeGreaterThan(15);
+    expect(ab.byteLength >= 15).toBe(true);
   });
 
   it("should add a PonyfillBlob field's size to the PonyfillFormData length", async () => {
@@ -133,9 +134,12 @@ describe('Form Data', () => {
         fileSize: 1,
       },
     });
-    await expect(() => requestWillParse.formData()).rejects.toThrowError(
-      'File size limit exceeded: 1 bytes',
-    );
+    try {
+      await requestWillParse.formData();
+      expect(true).toBe(false);
+    } catch (error: any) {
+      expect(error.message).toBe('File size limit exceeded: 1 bytes');
+    }
   });
   it('support native Blob', async () => {
     const formData = new PonyfillFormData();
@@ -150,4 +154,19 @@ describe('Form Data', () => {
     expect(requestText).toContain(`Content-Type: text/plain`);
     expect(requestText).toContain(`Hello world!`);
   });
+  if (globalThis.File) {
+    it('support native File', async () => {
+      const formData = new PonyfillFormData();
+      const file = new globalThis.File(['Hello world!'], 'greetings.txt', { type: 'text/plain' });
+      formData.append('greetings', file as any);
+      const request = new PonyfillRequest('http://localhost:8080', {
+        method: 'POST',
+        body: formData,
+      });
+      const requestText = await request.text();
+      expect(requestText).toContain(`Content-Disposition: form-data; name="greetings"`);
+      expect(requestText).toContain(`Content-Type: text/plain`);
+      expect(requestText).toContain(`Hello world!`);
+    });
+  }
 });

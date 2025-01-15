@@ -1,60 +1,48 @@
-import { BodyPonyfillInit, PonyfillBody, PonyfillBodyOptions } from './Body';
-import { PonyfillHeaders, PonyfillHeadersInit } from './Headers';
+import { STATUS_CODES } from 'node:http';
+import { BodyPonyfillInit, PonyfillBody, PonyfillBodyOptions } from './Body.js';
+import { isHeadersLike, PonyfillHeaders, PonyfillHeadersInit } from './Headers.js';
 
 export type ResponsePonyfilInit = PonyfillBodyOptions &
   Omit<ResponseInit, 'headers'> & {
-    url?: string;
-    redirected?: boolean;
-    headers?: PonyfillHeadersInit;
-    type?: ResponseType;
+    url?: string | undefined;
+    redirected?: boolean | undefined;
+    headers?: PonyfillHeadersInit | undefined;
+    type?: ResponseType | undefined;
   };
 
+const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
+
 export class PonyfillResponse<TJSON = any> extends PonyfillBody<TJSON> implements Response {
-  constructor(body?: BodyPonyfillInit | null, init?: ResponsePonyfilInit) {
+  headers: Headers;
+
+  constructor(body?: BodyPonyfillInit | null | undefined, init?: ResponsePonyfilInit) {
     super(body || null, init);
-    if (init) {
-      this.headers = new PonyfillHeaders(init.headers);
-      this.status = init.status || 200;
-      this.statusText = init.statusText || 'OK';
-      this.url = init.url || '';
-      this.redirected = init.redirected || false;
-      this.type = init.type || 'default';
-    }
+    this.headers =
+      init?.headers && isHeadersLike(init.headers)
+        ? init.headers
+        : new PonyfillHeaders(init?.headers);
+    this.status = init?.status || 200;
+    this.statusText = init?.statusText || STATUS_CODES[this.status] || 'OK';
+    this.url = init?.url || '';
+    this.redirected = init?.redirected || false;
+    this.type = init?.type || 'default';
 
-    const contentTypeInHeaders = this.headers.get('content-type');
-    if (!contentTypeInHeaders) {
-      if (this.contentType) {
-        this.headers.set('content-type', this.contentType);
-      }
-    } else {
-      this.contentType = contentTypeInHeaders;
-    }
-
-    const contentLengthInHeaders = this.headers.get('content-length');
-    if (!contentLengthInHeaders) {
-      if (this.contentLength) {
-        this.headers.set('content-length', this.contentLength.toString());
-      }
-    } else {
-      this.contentLength = parseInt(contentLengthInHeaders, 10);
-    }
+    this.handleContentLengthHeader();
   }
-
-  headers: Headers = new PonyfillHeaders();
 
   get ok() {
     return this.status >= 200 && this.status < 300;
   }
 
-  status = 200;
-  statusText = 'OK';
-  url = '';
-  redirected = false;
+  status: number;
+  statusText: string;
+  url: string;
+  redirected: boolean;
 
-  type: ResponseType = 'default';
+  type: ResponseType;
 
   clone() {
-    return new PonyfillResponse(this.body, this);
+    return this;
   }
 
   static error() {
@@ -64,7 +52,7 @@ export class PonyfillResponse<TJSON = any> extends PonyfillBody<TJSON> implement
     });
   }
 
-  static redirect(url: string, status = 301) {
+  static redirect(url: string, status = 302) {
     if (status < 300 || status > 399) {
       throw new RangeError('Invalid status code');
     }
@@ -76,13 +64,14 @@ export class PonyfillResponse<TJSON = any> extends PonyfillBody<TJSON> implement
     });
   }
 
-  static json<T = any>(data: T, init: RequestInit = {}) {
-    return new PonyfillResponse<T>(JSON.stringify(data), {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...init?.headers,
-      },
-    });
+  static json<T = any>(data: T, init: ResponsePonyfilInit = {}) {
+    init.headers =
+      init?.headers && isHeadersLike(init.headers)
+        ? init.headers
+        : new PonyfillHeaders(init?.headers);
+    if (!init.headers.has('content-type')) {
+      init.headers.set('content-type', JSON_CONTENT_TYPE);
+    }
+    return new PonyfillResponse<T>(JSON.stringify(data), init);
   }
 }

@@ -1,5 +1,868 @@
 # @whatwg-node/server
 
+## 0.9.65
+
+### Patch Changes
+
+- [#1926](https://github.com/ardatan/whatwg-node/pull/1926)
+  [`bae5de1`](https://github.com/ardatan/whatwg-node/commit/bae5de158dd2fa3472d69ca7486ea68940d43c74)
+  Thanks [@ardatan](https://github.com/ardatan)! - While calling `handleNodeRequest` or
+  `handleNodeRequestAndResponse`, `waitUntil` is not added automatically as in `requestListener` for
+  Node.js integration. This change adds `waitUntil` into the `serverContext` if not present.
+
+  Fixes the issue with Fastify integration that uses the mentioned methods
+
+## 0.9.64
+
+### Patch Changes
+
+- [#1899](https://github.com/ardatan/whatwg-node/pull/1899)
+  [`a84e84a`](https://github.com/ardatan/whatwg-node/commit/a84e84aa5c14f23c30637ccd290a099a39c445a1)
+  Thanks [@ardatan](https://github.com/ardatan)! - - New `onDispose` hook which is alias of
+  `Symbol.asyncDispose` for Explicit Resource Management
+
+  - Registration of the server adapter's disposal to the global process termination listener is now
+    opt-in and configurable.
+
+  ```ts
+  const plugin: ServerAdapterPlugin = {
+    onDispose() {
+      console.log('Server adapter is disposed')
+    }
+  }
+
+  const serverAdapter = createServerAdapter(() => new Response('Hello world!'), {
+    plugins: [plugin],
+    // Register the server adapter's disposal to the global process termination listener
+    // Then the server adapter will be disposed when the process exit signals only in Node.js!
+    disposeOnProcessTerminate: true
+  })
+
+  await serverAdapter.dispose()
+  // Prints 'Server adapter is disposed'
+  ```
+
+## 0.9.63
+
+### Patch Changes
+
+- [`c75e6e3`](https://github.com/ardatan/whatwg-node/commit/c75e6e39207664c7a33fcb1ba0f211774e0c7c97)
+  Thanks [@ardatan](https://github.com/ardatan)! - Export \`DisposableSymbols\` for disposable
+  plugins
+
+## 0.9.62
+
+### Patch Changes
+
+- [#1880](https://github.com/ardatan/whatwg-node/pull/1880)
+  [`95e5ce4`](https://github.com/ardatan/whatwg-node/commit/95e5ce4a32e51b8727b31ea711903e7924c8e47e)
+  Thanks [@EmrysMyrddin](https://github.com/EmrysMyrddin)! - Docs for hooks
+
+## 0.9.61
+
+### Patch Changes
+
+- [#1872](https://github.com/ardatan/whatwg-node/pull/1872)
+  [`7fb47d8`](https://github.com/ardatan/whatwg-node/commit/7fb47d8e6a988658089315970d5662f5bf6bcb1f)
+  Thanks [@ardatan](https://github.com/ardatan)! - Wait for remaining promises during `asyncDispose`
+  correctly
+
+  The `asyncDispose` function should wait for all remaining promises to resolve before returning.
+  This ensures that the server is fully disposed of before the function returns.
+
+  ```ts
+  import { createServerAdapter } from '@whatwg-node/server'
+
+  const deferred = Promise.withResolvers()
+
+  const adapter = createServerAdapter((req, ctx) => {
+    ctx.waitUntil(deferred.promise)
+    return new Response('Hello, world!')
+  })
+
+  const res = await adapter.fetch('http://example.com')
+  console.assert(res.status === 200)
+  console.assert((await res.text()) === 'Hello, world!')
+
+  let disposed = false
+  adapter[Symbol.asyncDispose]().then(() => {
+    disposed = true
+  })
+
+  console.assert(!disposed)
+
+  deferred.resolve()
+
+  console.assert(disposed)
+  ```
+
+## 0.9.60
+
+### Patch Changes
+
+- [#1838](https://github.com/ardatan/whatwg-node/pull/1838)
+  [`8947888`](https://github.com/ardatan/whatwg-node/commit/894788854a212932fffde7a52e88c21cd696c6db)
+  Thanks [@ardatan](https://github.com/ardatan)! - Respect SIGTERM as termination event
+
+## 0.9.59
+
+### Patch Changes
+
+- [`b4ab548`](https://github.com/ardatan/whatwg-node/commit/b4ab548cf11a0ec641e1800690684176eecad74b)
+  Thanks [@ardatan](https://github.com/ardatan)! - Remove SIGTERM from termination events to prevent
+  hangs, and always add disposable stack to the termination events
+
+## 0.9.58
+
+### Patch Changes
+
+- [`5a9098c`](https://github.com/ardatan/whatwg-node/commit/5a9098cdc2984c4ad80e136fc93250a97145852e)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix on plugin types
+
+## 0.9.57
+
+### Patch Changes
+
+- [`e88ab4a`](https://github.com/ardatan/whatwg-node/commit/e88ab4a826184c05d006620bbd3ef20942ea83d9)
+  Thanks [@ardatan](https://github.com/ardatan)! - dependencies updates:
+
+  - Added dependency
+    [`@whatwg-node/disposablestack@^0.0.5` ↗︎](https://www.npmjs.com/package/@whatwg-node/disposablestack/v/0.0.5)
+    (to `dependencies`)
+
+- [`e88ab4a`](https://github.com/ardatan/whatwg-node/commit/e88ab4a826184c05d006620bbd3ef20942ea83d9)
+  Thanks [@ardatan](https://github.com/ardatan)! - New Explicit Resource Management feature for the
+  server adapters;
+  [Learn more](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-2.html)
+  - `Symbol.dispose` and `Symbol.asyncDispose` hooks When the server adapter plugin has these hooks,
+    it is added to the disposable stack of the server adapter. When the server adapter is disposed,
+    those hooks are triggered
+  - `disposableStack` in the server adapter The shared disposable stack that will be triggered when
+    `Symbol.asyncDispose` is called.
+  - Automatic disposal on Node and Node-compatible environments Even if the server adapter is not
+    disposed explicitly, the disposal logic will be triggered on the process termination (SIGINT,
+    SIGTERM etc)
+  - ctx.waitUntil relation If it is an environment does not natively provide `waitUntil`, the
+    unresolved passed promises will be resolved by the disposable stack.
+
+## 0.9.56
+
+### Patch Changes
+
+- [#1814](https://github.com/ardatan/whatwg-node/pull/1814)
+  [`54c244d`](https://github.com/ardatan/whatwg-node/commit/54c244d99757c1469ee226e54baffe7b5b0924c7)
+  Thanks [@ardatan](https://github.com/ardatan)! - Small improvements for Bun support
+
+## 0.9.55
+
+### Patch Changes
+
+- [#1799](https://github.com/ardatan/whatwg-node/pull/1799)
+  [`7d1f0ff`](https://github.com/ardatan/whatwg-node/commit/7d1f0ff4675911ecb249d609d200fd69f77e8d94)
+  Thanks [@ardatan](https://github.com/ardatan)! - Avoid polluting the original object in case of
+  \`Object.create\`
+
+## 0.9.54
+
+### Patch Changes
+
+- [#1790](https://github.com/ardatan/whatwg-node/pull/1790)
+  [`c7d49b1`](https://github.com/ardatan/whatwg-node/commit/c7d49b1dad95412b99126c289a44b1fbf3473a65)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle request abort correctly with AbortSignal
+
+## 0.9.53
+
+### Patch Changes
+
+- Updated dependencies
+  [[`6c006e1`](https://github.com/ardatan/whatwg-node/commit/6c006e12eaa6705cdf20b7b43cccc44a1f7ea185)]:
+  - @whatwg-node/fetch@0.10.0
+
+## 0.9.52
+
+### Patch Changes
+
+- [`323a519`](https://github.com/ardatan/whatwg-node/commit/323a5191a93c8a0a614077f89a2197b9c087a969)
+  Thanks [@ardatan](https://github.com/ardatan)! - Allow other libs to redefine `Request`'s
+  properties
+
+## 0.9.51
+
+### Patch Changes
+
+- [#1644](https://github.com/ardatan/whatwg-node/pull/1644)
+  [`637185f`](https://github.com/ardatan/whatwg-node/commit/637185f5c992ccabff13b185d4e14f09680228da)
+  Thanks [@renovate](https://github.com/apps/renovate)! - Respect given fetchAPI
+
+- Updated dependencies []:
+  - @whatwg-node/fetch@0.9.23
+
+## 0.9.50
+
+### Patch Changes
+
+- [`9281e02`](https://github.com/ardatan/whatwg-node/commit/9281e021282a43a3dda8c8a5c9647d340b28698e)
+  Thanks [@ardatan](https://github.com/ardatan)! - Improvements with uWS Body handling
+
+- Updated dependencies
+  [[`77dd1c3`](https://github.com/ardatan/whatwg-node/commit/77dd1c3acde29aeb828b6eb37b6fbdbb47a16c57)]:
+  - @whatwg-node/fetch@0.9.22
+
+## 0.9.49
+
+### Patch Changes
+
+- [`8a43669`](https://github.com/ardatan/whatwg-node/commit/8a4366984a1854e93251e43711a1c50541818e9f)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix waitUntil issue
+
+## 0.9.48
+
+### Patch Changes
+
+- [#1577](https://github.com/ardatan/whatwg-node/pull/1577)
+  [`99c4344`](https://github.com/ardatan/whatwg-node/commit/99c4344ec82717be079e725538a532a827fbef82)
+  Thanks [@ardatan](https://github.com/ardatan)! - - Improve native ReadableStream handling inside
+  ponyfills
+  - Use `waitUntil` instead of floating promises
+  - Handle early termination in `WritableStream`
+  - Handle `waitUntil` correctly within a dummy call of `ServerAdapter.fetch` method
+- Updated dependencies
+  [[`99c4344`](https://github.com/ardatan/whatwg-node/commit/99c4344ec82717be079e725538a532a827fbef82)]:
+  - @whatwg-node/fetch@0.9.21
+
+## 0.9.47
+
+### Patch Changes
+
+- [#1566](https://github.com/ardatan/whatwg-node/pull/1566)
+  [`de1e95a`](https://github.com/ardatan/whatwg-node/commit/de1e95a8eb107083e638aa8472089b96b33bbe4a)
+  Thanks [@ardatan](https://github.com/ardatan)! - Avoid constructing DecompressionStream to check
+  supported encodings
+
+- Updated dependencies
+  [[`de1e95a`](https://github.com/ardatan/whatwg-node/commit/de1e95a8eb107083e638aa8472089b96b33bbe4a)]:
+  - @whatwg-node/fetch@0.9.20
+
+## 0.9.46
+
+### Patch Changes
+
+- [`9805a25`](https://github.com/ardatan/whatwg-node/commit/9805a2525c3d1c3b093000ef1111f770b8e8496a)
+  Thanks [@ardatan](https://github.com/ardatan)! - While using `useContentEncoding`, if compression
+  is applied in both ends, respect `Accept-Encoding` from the client correctly
+
+## 0.9.45
+
+### Patch Changes
+
+- [#1088](https://github.com/ardatan/whatwg-node/pull/1088)
+  [`8b2d14a`](https://github.com/ardatan/whatwg-node/commit/8b2d14a1dd81aeaf651fbbe28b16efe15bcde15a)
+  Thanks [@f5io](https://github.com/f5io)! - Wait for the server response to drain the existing data
+  in the stream then send the other one
+
+## 0.9.44
+
+### Patch Changes
+
+- [#1495](https://github.com/ardatan/whatwg-node/pull/1495)
+  [`bebc159`](https://github.com/ardatan/whatwg-node/commit/bebc159e0a470a0ea89a8575f620ead3f1b6b594)
+  Thanks [@ardatan](https://github.com/ardatan)! - Implement \`CompressionStream\`,
+  \`WritableStream\` and \`TransformStream\`
+
+- Updated dependencies
+  [[`bebc159`](https://github.com/ardatan/whatwg-node/commit/bebc159e0a470a0ea89a8575f620ead3f1b6b594)]:
+  - @whatwg-node/fetch@0.9.19
+
+## 0.9.43
+
+### Patch Changes
+
+- [`91df5d2`](https://github.com/ardatan/whatwg-node/commit/91df5d250d052ec504a1609a66cc5ae1ac72c686)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix descriptor issue when .fetch is used with
+  dummy context
+
+## 0.9.42
+
+### Patch Changes
+
+- [`5fa49ca`](https://github.com/ardatan/whatwg-node/commit/5fa49caf6bf6f65791aae3da2edbe8c2136cd53e)
+  Thanks [@ardatan](https://github.com/ardatan)! - Small fix that happens when .fetch receives a
+  dummy request
+
+## 0.9.41
+
+### Patch Changes
+
+- [`d238c52`](https://github.com/ardatan/whatwg-node/commit/d238c5213a9e80afc393bbfc7d48bc29752f1661)
+  Thanks [@ardatan](https://github.com/ardatan)! - Do not apply decompression for fetch method
+
+## 0.9.40
+
+### Patch Changes
+
+- [#1465](https://github.com/ardatan/whatwg-node/pull/1465)
+  [`9f6546f`](https://github.com/ardatan/whatwg-node/commit/9f6546f7c27ab00ba7d44e82c4557135d0217c8a)
+  Thanks [@EmrysMyrddin](https://github.com/EmrysMyrddin)! - Fix context type to expose the
+  `waitUntil` method.
+
+## 0.9.39
+
+### Patch Changes
+
+- [`a3732a6`](https://github.com/ardatan/whatwg-node/commit/a3732a6c85dbce173b0946f70e3628c23738c799)
+  Thanks [@ardatan](https://github.com/ardatan)! - Update content-length when compressed
+
+## 0.9.38
+
+### Patch Changes
+
+- [`f7bcbea`](https://github.com/ardatan/whatwg-node/commit/f7bcbea0c0a940870efb47faeb4b64d07d990ce4)
+  Thanks [@ardatan](https://github.com/ardatan)! - Support \`Content-Encoding: none\`
+
+## 0.9.37
+
+### Patch Changes
+
+- [#1481](https://github.com/ardatan/whatwg-node/pull/1481)
+  [`481bdfd`](https://github.com/ardatan/whatwg-node/commit/481bdfd0734b6c2c70b17dccb701b068f8aa06d9)
+  Thanks [@ardatan](https://github.com/ardatan)! - New plugin to handle E2E request compression
+
+  When the client provides `Accept-Encoding` header, if the server supports the encoding, it will
+  compress the response body. This will reduce the size of the response body and improve the
+  performance of the application.
+
+  On the other hand, if the client sends `Content-Encoding` header, the server will decompress the
+  request body before processing it. This will allow the server to handle the request body in its
+  original form. If the server does not support the encoding, it will respond with
+  `415 Unsupported Media Type` status code.
+
+  `serverAdapter`'s `fetch` function handles the compression and decompression of the request and
+  response bodies.
+
+  ```ts
+  import { createServerAdapter, Response, useContentEncoding } from '@whatwg-node/server'
+
+  const serverAdapter = createServerAdapter(() => Response.json({ hello: 'world' }), {
+    plugins: [useContentEncoding()]
+  })
+  ```
+
+## 0.9.36
+
+### Patch Changes
+
+- [#1407](https://github.com/ardatan/whatwg-node/pull/1407)
+  [`ebbc85b`](https://github.com/ardatan/whatwg-node/commit/ebbc85b5dbf1fad554718276f2892012c59cbabe)
+  Thanks [@Akryum](https://github.com/Akryum)! - Vary: Access-Control-Request-Headers would
+  overwrite Vary: Origin
+
+## 0.9.35
+
+### Patch Changes
+
+- [`cf07839`](https://github.com/ardatan/whatwg-node/commit/cf078397ceec3dc2e331b8507c076c05d50dac45)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fixes TypeScript v5.5 compatibility issues
+
+## 0.9.34
+
+### Patch Changes
+
+- [`e6234df`](https://github.com/ardatan/whatwg-node/commit/e6234df97be45f8c1e23c95c642c8b1d03ee433c)
+  Thanks [@ardatan](https://github.com/ardatan)! - Do not call res.onAborted multiple times because
+  it causes it to overwrite the previous listener, and use AbortSignal's abort event instead
+
+## 0.9.33
+
+### Patch Changes
+
+- [#1246](https://github.com/ardatan/whatwg-node/pull/1246)
+  [`4717be5`](https://github.com/ardatan/whatwg-node/commit/4717be5a0311334c81176c4a3bc6c01e286f3a39)
+  Thanks [@ardatan](https://github.com/ardatan)! - Ensure unique context objects are sent per each
+  request.
+
+  For example in CloudFlare Workers, `fetch` receives `env` and `ctx`, and `env` is shared across
+  requests. That causes the server receives the same context object for each request. Now the server
+  creates a new context object for each request, even if the first argument is the same. Before, it
+  always takes the first argument as the context object, then merges the following arguments into
+  it.
+
+## 0.9.32
+
+### Patch Changes
+
+- [#1224](https://github.com/ardatan/whatwg-node/pull/1224)
+  [`d6bec0a`](https://github.com/ardatan/whatwg-node/commit/d6bec0aae49f8f6d2b27b62c53ba7cde2ce40485)
+  Thanks [@ardatan](https://github.com/ardatan)! - Introduce `handleRequestFromResponse` method for
+  a better Fastify integration
+
+## 0.9.31
+
+### Patch Changes
+
+- [#1220](https://github.com/ardatan/whatwg-node/pull/1220)
+  [`ac6b719`](https://github.com/ardatan/whatwg-node/commit/ac6b71921915e3b75c361956c01f65fbec4ffc69)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix UWS's behavior in case of request
+  cancellation
+
+- [#1220](https://github.com/ardatan/whatwg-node/pull/1220)
+  [`ac6b719`](https://github.com/ardatan/whatwg-node/commit/ac6b71921915e3b75c361956c01f65fbec4ffc69)
+  Thanks [@ardatan](https://github.com/ardatan)! - Use ServerResponse's close event to catch request
+  cancellation
+
+## 0.9.30
+
+### Patch Changes
+
+- [#1218](https://github.com/ardatan/whatwg-node/pull/1218)
+  [`1443f93`](https://github.com/ardatan/whatwg-node/commit/1443f9320561c1334d9de890c8847fb874cb67fa)
+  Thanks [@ardatan](https://github.com/ardatan)! - Set \`reason\` in
+  \`ServerAdapterRequestAbortSignal\` to get a proper error when the request got aborted by the
+  client
+
+## 0.9.29
+
+### Patch Changes
+
+- [#1190](https://github.com/ardatan/whatwg-node/pull/1190)
+  [`c6f93ee`](https://github.com/ardatan/whatwg-node/commit/c6f93ee1692e9c1e56471e813855b4fb4ad2f0dd)
+  Thanks [@ardatan](https://github.com/ardatan)! - Remove node: protocol which is not supported
+  still in some Node versions and ESM mode
+
+## 0.9.28
+
+### Patch Changes
+
+- [`3f31f2d`](https://github.com/ardatan/whatwg-node/commit/3f31f2d607e4638eb92af139442bba610b33f70e)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle errors from async request handlers
+  correctly in case of AbortSignal
+
+## 0.9.27
+
+### Patch Changes
+
+- [`a686f8c`](https://github.com/ardatan/whatwg-node/commit/a686f8c49828303e4dd3582ff6212b233fac1c9f)
+  Thanks [@ardatan](https://github.com/ardatan)! - Respect user provided `AbortSignal` correctly
+
+## 0.9.26
+
+### Patch Changes
+
+- [#1143](https://github.com/ardatan/whatwg-node/pull/1143)
+  [`9958bb1`](https://github.com/ardatan/whatwg-node/commit/9958bb1367e1918217abb4244df1685aa1e025fe)
+  Thanks [@aarne](https://github.com/aarne)! - Fix async handling of uWS
+
+- Updated dependencies
+  [[`0c6e9ca`](https://github.com/ardatan/whatwg-node/commit/0c6e9ca61ee07b49009b6e4d7d9d5e1d80912450)]:
+  - @whatwg-node/fetch@0.9.17
+
+## 0.9.25
+
+### Patch Changes
+
+- [`ad1e5a0`](https://github.com/ardatan/whatwg-node/commit/ad1e5a0a8408886b373edb19da619049b530cfcf)
+  Thanks [@ardatan](https://github.com/ardatan)! - Use duplex half for stream based Requests
+
+## 0.9.24
+
+### Patch Changes
+
+- [#1101](https://github.com/ardatan/whatwg-node/pull/1101)
+  [`bf0c9ab`](https://github.com/ardatan/whatwg-node/commit/bf0c9ab7d2894f9c604c2b6d9f6e4d72eec074fb)
+  Thanks [@ardatan](https://github.com/ardatan)! - Access the property in the given server context
+  object correctly
+
+## 0.9.23
+
+### Patch Changes
+
+- [`f775c41`](https://github.com/ardatan/whatwg-node/commit/f775c41b255c75a84102ebb1928e986813c31372)
+  Thanks [@ardatan](https://github.com/ardatan)! - If protocol is not available, use
+  socket.encrypted correctly
+
+## 0.9.22
+
+### Patch Changes
+
+- [`340c719`](https://github.com/ardatan/whatwg-node/commit/340c719b1e54bcb8446f0b648d9a9c906557e7f4)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle aborted requests correctly
+
+## 0.9.21
+
+### Patch Changes
+
+- [#1015](https://github.com/ardatan/whatwg-node/pull/1015)
+  [`84e6e37`](https://github.com/ardatan/whatwg-node/commit/84e6e3771360b163ee8c41177b08640ec2a793a7)
+  Thanks [@ardatan](https://github.com/ardatan)! - Send AbortSignal at correct time
+
+## 0.9.20
+
+### Patch Changes
+
+- [`eb326a6`](https://github.com/ardatan/whatwg-node/commit/eb326a6e00fb75305b3cf2bd9187b8e55dcf85f2)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix for undefined server context parts
+
+## 0.9.19
+
+### Patch Changes
+
+- [#997](https://github.com/ardatan/whatwg-node/pull/997)
+  [`0c28ae9`](https://github.com/ardatan/whatwg-node/commit/0c28ae90f531fb98ea9d9b585b530a5f542f1d60)
+  Thanks [@ardatan](https://github.com/ardatan)! - Avoid mutating the static context
+
+  For example if the adapter receives the server object as the server context, it is isolated and
+  the handler cannot mutate it, otherwise it will leak. Bun does that so this patch is needed to
+  avoid leaking the server object.
+
+## 0.9.18
+
+### Patch Changes
+
+- [`3fefa17`](https://github.com/ardatan/whatwg-node/commit/3fefa178d6215a92570a4765b84321873ec44db6)
+  Thanks [@ardatan](https://github.com/ardatan)! - Support Bun's Node compat mode
+
+## 0.9.17
+
+### Patch Changes
+
+- [`ea508c5`](https://github.com/ardatan/whatwg-node/commit/ea508c5db519651d9ad4c39141e319f9a3c89fdb)
+  Thanks [@ardatan](https://github.com/ardatan)! - Iterate set-cookie headers correctly
+
+## 0.9.16
+
+### Patch Changes
+
+- [`e4061de`](https://github.com/ardatan/whatwg-node/commit/e4061de6296d70da853eca9729092a43aeab7884)
+  Thanks [@ardatan](https://github.com/ardatan)! - If Response.error is not implemented, use
+  Response ctor directly
+
+## 0.9.15
+
+### Patch Changes
+
+- [`a808346`](https://github.com/ardatan/whatwg-node/commit/a8083469003458bd33a5afe77ea766c5ffaab6b6)
+  Thanks [@ardatan](https://github.com/ardatan)! - Improve error handling plugin
+
+## 0.9.14
+
+### Patch Changes
+
+- [#806](https://github.com/ardatan/whatwg-node/pull/806)
+  [`9b6911a`](https://github.com/ardatan/whatwg-node/commit/9b6911a8fca0fc046278a8b490e14eb4412da98f)
+  Thanks [@ardatan](https://github.com/ardatan)! - Return `Buffer` instead of `ArrayBuffer` in
+  `.arrayBuffer` due to a bug in Node.js that returns a bigger ArrayBuffer causing memory overflow
+- Updated dependencies
+  [[`9b6911a`](https://github.com/ardatan/whatwg-node/commit/9b6911a8fca0fc046278a8b490e14eb4412da98f)]:
+  - @whatwg-node/fetch@0.9.10
+
+## 0.9.13
+
+### Patch Changes
+
+- [#786](https://github.com/ardatan/whatwg-node/pull/786)
+  [`a254e88`](https://github.com/ardatan/whatwg-node/commit/a254e887d2102d29ff31df121c5f7ae5806c99c9)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle query parameters correctly in uWS
+
+## 0.9.12
+
+### Patch Changes
+
+- [#777](https://github.com/ardatan/whatwg-node/pull/777)
+  [`e3ae0a3`](https://github.com/ardatan/whatwg-node/commit/e3ae0a37c6aae11b249ea3134feb4a55a0cd288c)
+  Thanks [@ardatan](https://github.com/ardatan)! - Do not create a new Buffer to uWS and node-http,
+  and use the existing Buffer instead for better performance in Node.js.
+
+## 0.9.11
+
+### Patch Changes
+
+- [`4b67036`](https://github.com/ardatan/whatwg-node/commit/4b67036b1e84e43e103e7fe9b69d240a72be6e6d)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle AbortSignal
+
+## 0.9.10
+
+### Patch Changes
+
+- [#753](https://github.com/ardatan/whatwg-node/pull/753)
+  [`10db17b`](https://github.com/ardatan/whatwg-node/commit/10db17bb041edbd5b5fe80120956d97f073e1bf2)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle errors thrown in the request handlers as
+  Internal Server Error
+
+## 0.9.9
+
+### Patch Changes
+
+- [`11fb356`](https://github.com/ardatan/whatwg-node/commit/11fb3568885a60d2f63a8e599fa599a7fd1a4622)
+  Thanks [@ardatan](https://github.com/ardatan)! - Avoid wrapping handleRequest if there is no hook
+
+## 0.9.8
+
+### Patch Changes
+
+- [#741](https://github.com/ardatan/whatwg-node/pull/741)
+  [`427b829`](https://github.com/ardatan/whatwg-node/commit/427b829356ddd9a0d009a37e066db658dad77ff2)
+  Thanks [@ardatan](https://github.com/ardatan)! - Avoid promise usages while handling hooks for
+  performance optimizations
+
+## 0.9.7
+
+### Patch Changes
+
+- [#732](https://github.com/ardatan/whatwg-node/pull/732)
+  [`0794ee5`](https://github.com/ardatan/whatwg-node/commit/0794ee52568bf15a1e1313a0121d324d4c510f80)
+  Thanks [@ardatan](https://github.com/ardatan)! - If the environment is not able to send the
+  response, do not terminate the server and handle internal errors in a better way
+
+## 0.9.6
+
+### Patch Changes
+
+- [`5136050`](https://github.com/ardatan/whatwg-node/commit/5136050a48800e7cb2f41ba7df79945ff6f24ff6)
+  Thanks [@ardatan](https://github.com/ardatan)! - For uWebSockets, call res.onAborted only if
+  response is a stream
+
+## 0.9.5
+
+### Patch Changes
+
+- [`633655d`](https://github.com/ardatan/whatwg-node/commit/633655d00b00992a3195c1a8aa0bdf27e07381b2)
+  Thanks [@ardatan](https://github.com/ardatan)! - Cork the response once for status codes and
+  headers with the static response in uWS handler
+
+## 0.9.4
+
+### Patch Changes
+
+- [#694](https://github.com/ardatan/whatwg-node/pull/694)
+  [`96ee8ce`](https://github.com/ardatan/whatwg-node/commit/96ee8ceb15307d5fed99190d9a2c95fd0f0a0449)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle uWS onAbort in a better way
+
+## 0.9.3
+
+### Patch Changes
+
+- [`6082626`](https://github.com/ardatan/whatwg-node/commit/608262642f9b2a1b0936ff223efb3cf982134bd3)
+  Thanks [@ardatan](https://github.com/ardatan)! - Make sure we copy the buffer from uWS
+
+## 0.9.2
+
+### Patch Changes
+
+- [`bc955e0`](https://github.com/ardatan/whatwg-node/commit/bc955e09cca71d93b8bf59c2dab9fd440d1a0193)
+  Thanks [@ardatan](https://github.com/ardatan)! - Optimizations for setting headers to
+  `ServerResponse`
+
+## 0.9.1
+
+### Patch Changes
+
+- [#646](https://github.com/ardatan/whatwg-node/pull/646)
+  [`2f25027`](https://github.com/ardatan/whatwg-node/commit/2f250274b9b4d895e1120dbeb185e820269ca7a6)
+  Thanks [@n1ru4l](https://github.com/n1ru4l)! - Internal adjustments for fixing Next.js support.
+
+## 0.9.0
+
+### Minor Changes
+
+- [`124bbe5`](https://github.com/ardatan/whatwg-node/commit/124bbe55f125dc9248fdde9c7e86637d905739fe)
+  Thanks [@ardatan](https://github.com/ardatan)! - BREAKING: splitSetCookieHeader has been removed.
+  Use `Headers.getSetCookie` instead
+
+### Patch Changes
+
+- Updated dependencies
+  [[`124bbe5`](https://github.com/ardatan/whatwg-node/commit/124bbe55f125dc9248fdde9c7e86637d905739fe)]:
+  - @whatwg-node/fetch@0.9.7
+
+## 0.8.12
+
+### Patch Changes
+
+- [`025613a`](https://github.com/ardatan/whatwg-node/commit/025613af57695c2158189156479129a461d758ce)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix cookie handling
+
+## 0.8.11
+
+### Patch Changes
+
+- [`9920800`](https://github.com/ardatan/whatwg-node/commit/992080051bf91af76471984f546a5eb8d9116024)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle empty server contexts
+
+## 0.8.10
+
+### Patch Changes
+
+- [#614](https://github.com/ardatan/whatwg-node/pull/614)
+  [`f07d1c5`](https://github.com/ardatan/whatwg-node/commit/f07d1c5af5d17d64a45162a23a755ae8ce11ac93)
+  Thanks [@ardatan](https://github.com/ardatan)! - Performance optimizations
+
+- [#614](https://github.com/ardatan/whatwg-node/pull/614)
+  [`f07d1c5`](https://github.com/ardatan/whatwg-node/commit/f07d1c5af5d17d64a45162a23a755ae8ce11ac93)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix set-cookie handling for Node
+
+- Updated dependencies
+  [[`f07d1c5`](https://github.com/ardatan/whatwg-node/commit/f07d1c5af5d17d64a45162a23a755ae8ce11ac93)]:
+  - @whatwg-node/fetch@0.9.6
+
+## 0.8.9
+
+### Patch Changes
+
+- [#612](https://github.com/ardatan/whatwg-node/pull/612)
+  [`273ca94`](https://github.com/ardatan/whatwg-node/commit/273ca94a35e0d4236d932e28f295f405d9adbd4c)
+  Thanks [@ardatan](https://github.com/ardatan)! - Performance optimizations
+
+- Updated dependencies
+  [[`273ca94`](https://github.com/ardatan/whatwg-node/commit/273ca94a35e0d4236d932e28f295f405d9adbd4c)]:
+  - @whatwg-node/fetch@0.9.5
+
+## 0.8.8
+
+### Patch Changes
+
+- [`11cb454`](https://github.com/ardatan/whatwg-node/commit/11cb45441fb81fb9caeaeb286c5cef57aad64ee9)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle multiple cookies correctly
+
+- [`11cb454`](https://github.com/ardatan/whatwg-node/commit/11cb45441fb81fb9caeaeb286c5cef57aad64ee9)
+  Thanks [@ardatan](https://github.com/ardatan)! - Handle headers in Node correctly
+
+## 0.8.7
+
+### Patch Changes
+
+- [#597](https://github.com/ardatan/whatwg-node/pull/597)
+  [`d118d53`](https://github.com/ardatan/whatwg-node/commit/d118d538f3ab75f87728c4c8373b5b53fb8e1d51)
+  Thanks [@ardatan](https://github.com/ardatan)! - Performance optimizations
+
+- Updated dependencies
+  [[`d118d53`](https://github.com/ardatan/whatwg-node/commit/d118d538f3ab75f87728c4c8373b5b53fb8e1d51)]:
+  - @whatwg-node/fetch@0.9.4
+
+## 0.8.6
+
+### Patch Changes
+
+- [`72680b3`](https://github.com/ardatan/whatwg-node/commit/72680b30b07e14032c3a50f6705c11a81dc5f3da)
+  Thanks [@ardatan](https://github.com/ardatan)! - More fixes for uWS
+
+## 0.8.5
+
+### Patch Changes
+
+- [#592](https://github.com/ardatan/whatwg-node/pull/592)
+  [`4cdb7c6`](https://github.com/ardatan/whatwg-node/commit/4cdb7c6851ccebec80576de584579709c8f23539)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix uWebSockets headers issue
+
+## 0.8.4
+
+### Patch Changes
+
+- [`c0bef34`](https://github.com/ardatan/whatwg-node/commit/c0bef34154031ad2158f558107c168ee5c9c9084)
+  Thanks [@ardatan](https://github.com/ardatan)! - Export more uWS helpers
+
+## 0.8.3
+
+### Patch Changes
+
+- [`d7d9d9f`](https://github.com/ardatan/whatwg-node/commit/d7d9d9ff8903126eb3a346d35dcf621cafff1bd8)
+  Thanks [@ardatan](https://github.com/ardatan)! - Bump internal packages
+
+- Updated dependencies
+  [[`d7d9d9f`](https://github.com/ardatan/whatwg-node/commit/d7d9d9ff8903126eb3a346d35dcf621cafff1bd8)]:
+  - @whatwg-node/fetch@0.9.3
+
+## 0.8.2
+
+### Patch Changes
+
+- [#583](https://github.com/ardatan/whatwg-node/pull/583)
+  [`15bf7c2`](https://github.com/ardatan/whatwg-node/commit/15bf7c2dcee1ff30d0142b9fc4f030c53fa2ab43)
+  Thanks [@ardatan](https://github.com/ardatan)! - dependencies updates:
+  - Added dependency
+    [`@repeaterjs/repeater@^3.0.4` ↗︎](https://www.npmjs.com/package/@repeaterjs/repeater/v/3.0.4)
+    (to `dependencies`)
+
+## 0.8.1
+
+### Patch Changes
+
+- [`102b437`](https://github.com/ardatan/whatwg-node/commit/102b4370c9ee3784297b3dae3f05a236490c6f46)
+  Thanks [@ardatan](https://github.com/ardatan)! - Better uWebSockets.js integration
+
+## 0.7.6
+
+### Patch Changes
+
+- Updated dependencies
+  [[`01051f8`](https://github.com/ardatan/whatwg-node/commit/01051f8b3408ac26612b8d8ea2702a3f7e6667af),
+  [`01051f8`](https://github.com/ardatan/whatwg-node/commit/01051f8b3408ac26612b8d8ea2702a3f7e6667af)]:
+  - @whatwg-node/fetch@0.9.0
+
+## 0.7.5
+
+### Patch Changes
+
+- [#434](https://github.com/ardatan/whatwg-node/pull/434)
+  [`9f242f8`](https://github.com/ardatan/whatwg-node/commit/9f242f8268748345899ea4b6f05dac3c6dcecbeb)
+  Thanks [@ardatan](https://github.com/ardatan)! - Update bob
+
+- Updated dependencies
+  [[`bf585a3`](https://github.com/ardatan/whatwg-node/commit/bf585a3b1cafa63bdee86dace6a0e08f98a9b554)]:
+  - @whatwg-node/fetch@0.8.3
+
+## 0.7.4
+
+### Patch Changes
+
+- [#403](https://github.com/ardatan/whatwg-node/pull/403)
+  [`225b5fd`](https://github.com/ardatan/whatwg-node/commit/225b5fde78d53702fecb968cb2c8f7c113d41b47)
+  Thanks [@ardatan](https://github.com/ardatan)! - Improvements
+
+## 0.7.3
+
+### Patch Changes
+
+- [`3bac7e3`](https://github.com/ardatan/whatwg-node/commit/3bac7e375df861a2f7c5807731791dd3b863a9fe)
+  Thanks [@ardatan](https://github.com/ardatan)! - Fix regression on handling methods from base
+  object
+
+## 0.7.2
+
+### Patch Changes
+
+- [#380](https://github.com/ardatan/whatwg-node/pull/380)
+  [`0df1ac7`](https://github.com/ardatan/whatwg-node/commit/0df1ac7d577ba831ce6431d68628b2028c37762f)
+  Thanks [@ardatan](https://github.com/ardatan)! - If a method returns the object itself, return the
+  adapter object
+
+- Updated dependencies
+  [[`0df1ac7`](https://github.com/ardatan/whatwg-node/commit/0df1ac7d577ba831ce6431d68628b2028c37762f)]:
+  - @whatwg-node/fetch@0.8.2
+
+## 0.7.1
+
+### Patch Changes
+
+- [`79428fd`](https://github.com/ardatan/whatwg-node/commit/79428fdfe52f897e1d3499c0068d18652cf5eccc)
+  Thanks [@ardatan](https://github.com/ardatan)! - Remove `onPluginInit`
+
+## 0.7.0
+
+### Minor Changes
+
+- [#264](https://github.com/ardatan/whatwg-node/pull/264)
+  [`f5fa2d7`](https://github.com/ardatan/whatwg-node/commit/f5fa2d743fd06e4da7fa4c4e842d8c45bab9e047)
+  Thanks [@ardatan](https://github.com/ardatan)! - Plugin System
+
+- [`720b6ab`](https://github.com/ardatan/whatwg-node/commit/720b6ab110e7bf0cc36454abdc38d622e8f0c35f)
+  Thanks [@ardatan](https://github.com/ardatan)! - BREAKING: `withCors` and `withErrorHandling` are
+  removed in `server` and `plugins` option is removed in `router`
+
+### Patch Changes
+
+- [`7d94f60`](https://github.com/ardatan/whatwg-node/commit/7d94f60e7d08407a2b4a4e7b7d06bace31466e57)
+  Thanks [@ardatan](https://github.com/ardatan)! - If the first parameter's request property throws,
+  consider it as a Request
+
 ## 0.6.7
 
 ### Patch Changes
@@ -39,8 +902,8 @@
   Thanks [@ardatan](https://github.com/ardatan)! - dependencies updates:
 
   - Updated dependency
-    [`@whatwg-node/fetch@^0.6.8` ↗︎](https://www.npmjs.com/package/@whatwg-node/fetch/v/0.6.8) (from
-    `0.6.8`, in `dependencies`)
+    [`@whatwg-node/fetch@^0.6.8` ↗︎](https://www.npmjs.com/package/@whatwg-node/fetch/v/0.6.8)
+    (from `0.6.8`, in `dependencies`)
 
 - [#314](https://github.com/ardatan/whatwg-node/pull/314)
   [`3aa1848`](https://github.com/ardatan/whatwg-node/commit/3aa18486d44c507617b25204c3d4a96bc8a4c9e4)
@@ -377,8 +1240,8 @@
 
   ```ts
   createServerAdapter(req => {
-    return new Response(`I got ${req.url}`);
-  });
+    return new Response(`I got ${req.url}`)
+  })
   ```
 
   Breaking Changes;

@@ -1,6 +1,8 @@
-import { PonyfillAbortController } from './AbortController';
-import { BodyPonyfillInit, PonyfillBody, PonyfillBodyOptions } from './Body';
-import { PonyfillHeaders, PonyfillHeadersInit } from './Headers';
+import { Agent as HTTPAgent } from 'node:http';
+import { Agent as HTTPSAgent } from 'node:https';
+import { BodyPonyfillInit, PonyfillBody, PonyfillBodyOptions } from './Body.js';
+import { isHeadersLike, PonyfillHeaders, PonyfillHeadersInit } from './Headers.js';
+import { PonyfillURL } from './URL.js';
 
 function isRequest(input: any): input is PonyfillRequest {
   return input[Symbol.toStringTag] === 'Request';
@@ -8,22 +10,41 @@ function isRequest(input: any): input is PonyfillRequest {
 
 export type RequestPonyfillInit = PonyfillBodyOptions &
   Omit<RequestInit, 'body' | 'headers'> & {
-    body?: BodyPonyfillInit | null;
-    headers?: PonyfillHeadersInit;
+    body?: BodyPonyfillInit | null | undefined;
+    duplex?: 'half' | 'full' | undefined;
+    headers?: PonyfillHeadersInit | undefined;
+    headersSerializer?: HeadersSerializer | undefined;
+    agent?: HTTPAgent | HTTPSAgent | false | undefined;
   };
+
+type HeadersSerializer = (
+  headers: Headers,
+  onContentLength?: (contentLength: string) => void,
+) => string[];
+
+function isURL(obj: any): obj is URL {
+  return obj?.href != null;
+}
 
 export class PonyfillRequest<TJSON = any> extends PonyfillBody<TJSON> implements Request {
   constructor(input: RequestInfo | URL, options?: RequestPonyfillInit) {
-    let url: string | undefined;
+    let _url: string | undefined;
+    let _parsedUrl: URL | undefined;
     let bodyInit: BodyPonyfillInit | null = null;
     let requestInit: RequestPonyfillInit | undefined;
 
     if (typeof input === 'string') {
-      url = input;
-    } else if ('href' in input) {
-      url = input.toString();
+      _url = input;
+    } else if (isURL(input)) {
+      _parsedUrl = input;
     } else if (isRequest(input)) {
-      url = input.url;
+      if (input._parsedUrl) {
+        _parsedUrl = input._parsedUrl;
+      } else if (input._url) {
+        _url = input._url;
+      } else {
+        _url = input.url;
+      }
       bodyInit = input.body;
       requestInit = input;
     }
@@ -35,9 +56,15 @@ export class PonyfillRequest<TJSON = any> extends PonyfillBody<TJSON> implements
 
     super(bodyInit, options);
 
+    this._url = _url;
+    this._parsedUrl = _parsedUrl;
+
     this.cache = requestInit?.cache || 'default';
     this.credentials = requestInit?.credentials || 'same-origin';
-    this.headers = new PonyfillHeaders(requestInit?.headers);
+    this.headers =
+      requestInit?.headers && isHeadersLike(requestInit.headers)
+        ? requestInit.headers
+        : new PonyfillHeaders(requestInit?.headers);
     this.integrity = requestInit?.integrity || '';
     this.keepalive = requestInit?.keepalive != null ? requestInit?.keepalive : false;
 
@@ -46,45 +73,84 @@ export class PonyfillRequest<TJSON = any> extends PonyfillBody<TJSON> implements
     this.redirect = requestInit?.redirect || 'follow';
     this.referrer = requestInit?.referrer || 'about:client';
     this.referrerPolicy = requestInit?.referrerPolicy || 'no-referrer';
-    this.signal = requestInit?.signal || new PonyfillAbortController().signal;
+    this._signal = requestInit?.signal;
+    this.headersSerializer = requestInit?.headersSerializer;
+    this.duplex = requestInit?.duplex || 'half';
 
-    this.url = url || '';
+    this.destination = 'document';
+    this.priority = 'auto';
 
-    const contentTypeInHeaders = this.headers.get('content-type');
-    if (!contentTypeInHeaders) {
-      if (this.contentType) {
-        this.headers.set('content-type', this.contentType);
-      }
-    } else {
-      this.contentType = contentTypeInHeaders;
+    if (this.method !== 'GET' && this.method !== 'HEAD') {
+      this.handleContentLengthHeader(true);
     }
 
-    const contentLengthInHeaders = this.headers.get('content-length');
-    if (!contentLengthInHeaders) {
-      if (this.contentLength) {
-        this.headers.set('content-length', this.contentLength.toString());
+    if (requestInit?.agent != null) {
+      const protocol = _parsedUrl?.protocol || _url || this.url;
+      if (requestInit.agent === false) {
+        this.agent = false;
+      } else if (protocol.startsWith('http:') && requestInit.agent instanceof HTTPAgent) {
+        this.agent = requestInit.agent;
+      } else if (protocol.startsWith('https:') && requestInit.agent instanceof HTTPSAgent) {
+        this.agent = requestInit.agent;
       }
-    } else {
-      this.contentLength = parseInt(contentLengthInHeaders, 10);
     }
   }
 
+  headersSerializer?: HeadersSerializer | undefined;
   cache: RequestCache;
   credentials: RequestCredentials;
-  destination: RequestDestination = '';
+  destination: RequestDestination;
   headers: Headers;
   integrity: string;
   keepalive: boolean;
   method: string;
   mode: RequestMode;
-  priority = 'auto';
+  priority: 'auto' | 'high' | 'low';
   redirect: RequestRedirect;
   referrer: string;
   referrerPolicy: ReferrerPolicy;
-  url: string;
-  signal: AbortSignal;
-
-  clone(): Request {
-    return new Request(this);
+  _url: string | undefined;
+  get url(): string {
+    if (this._url == null) {
+      if (this._parsedUrl) {
+        this._url = this._parsedUrl.toString();
+      } else {
+        throw new TypeError('Invalid URL');
+      }
+    }
+    return this._url;
   }
+
+  _parsedUrl: URL | undefined;
+  get parsedUrl(): URL {
+    if (this._parsedUrl == null) {
+      if (this._url != null) {
+        this._parsedUrl = new PonyfillURL(this._url, 'http://localhost');
+      } else {
+        throw new TypeError('Invalid URL');
+      }
+    }
+    return this._parsedUrl;
+  }
+
+  duplex: 'half' | 'full';
+
+  agent: HTTPAgent | HTTPSAgent | false | undefined;
+
+  private _signal: AbortSignal | undefined | null;
+
+  get signal() {
+    // Create a new signal only if needed
+    // Because the creation of signal is expensive
+    if (!this._signal) {
+      this._signal = new AbortController().signal;
+    }
+    return this._signal!;
+  }
+
+  clone(): PonyfillRequest<TJSON> {
+    return this;
+  }
+
+  [Symbol.toStringTag] = 'Request';
 }

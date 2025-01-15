@@ -1,20 +1,21 @@
-import { Readable } from 'stream';
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+import { Buffer } from 'node:buffer';
+import { Readable } from 'node:stream';
 import busboy from 'busboy';
-import { PonyfillBlob } from './Blob';
-import { PonyfillFile } from './File';
-import { getStreamFromFormData, PonyfillFormData } from './FormData';
-import { PonyfillReadableStream } from './ReadableStream';
-import { uint8ArrayToArrayBuffer } from './utils';
+import { hasArrayBufferMethod, hasBufferMethod, hasBytesMethod, PonyfillBlob } from './Blob.js';
+import { PonyfillFile } from './File.js';
+import { getStreamFromFormData, PonyfillFormData } from './FormData.js';
+import { PonyfillReadableStream } from './ReadableStream.js';
+import { fakePromise, isArrayBufferView } from './utils.js';
 
 enum BodyInitType {
   ReadableStream = 'ReadableStream',
   Blob = 'Blob',
   FormData = 'FormData',
-  ArrayBuffer = 'ArrayBuffer',
   String = 'String',
   Readable = 'Readable',
   Buffer = 'Buffer',
-  Uint8Array = 'Uint8Array',
+  AsyncIterable = 'AsyncIterable',
 }
 
 export type BodyPonyfillInit =
@@ -53,25 +54,56 @@ export class PonyfillBody<TJSON = any> implements Body {
     private bodyInit: BodyPonyfillInit | null,
     private options: PonyfillBodyOptions = {},
   ) {
-    const { bodyFactory, contentType, contentLength, bodyType } = processBodyInit(bodyInit);
+    const { bodyFactory, contentType, contentLength, bodyType, buffer } = processBodyInit(bodyInit);
     this._bodyFactory = bodyFactory;
     this.contentType = contentType;
     this.contentLength = contentLength;
     this.bodyType = bodyType;
+    this._buffer = buffer;
   }
 
-  private bodyType?: BodyInitType;
+  private bodyType?: BodyInitType | undefined;
 
   private _bodyFactory: () => PonyfillReadableStream<Uint8Array> | null = () => null;
   private _generatedBody: PonyfillReadableStream<Uint8Array> | null = null;
+  private _buffer?: Buffer | undefined;
 
   private generateBody(): PonyfillReadableStream<Uint8Array> | null {
+    if (this._generatedBody?.readable?.destroyed && this._buffer) {
+      this._generatedBody.readable = Readable.from(this._buffer);
+    }
     if (this._generatedBody) {
       return this._generatedBody;
     }
     const body = this._bodyFactory();
     this._generatedBody = body;
     return body;
+  }
+
+  protected handleContentLengthHeader(this: PonyfillBody & { headers: Headers }, forceSet = false) {
+    const contentTypeInHeaders = this.headers.get('content-type');
+    if (!contentTypeInHeaders) {
+      if (this.contentType) {
+        this.headers.set('content-type', this.contentType);
+      }
+    } else {
+      this.contentType = contentTypeInHeaders;
+    }
+
+    const contentLengthInHeaders = this.headers.get('content-length');
+
+    if (forceSet && this.bodyInit == null && !contentLengthInHeaders) {
+      this.contentLength = 0;
+      this.headers.set('content-length', '0');
+    }
+
+    if (!contentLengthInHeaders) {
+      if (this.contentLength) {
+        this.headers.set('content-length', this.contentLength.toString());
+      }
+    } else {
+      this.contentLength = parseInt(contentLengthInHeaders, 10);
+    }
   }
 
   public get body(): PonyfillReadableStream<Uint8Array> | null {
@@ -82,14 +114,14 @@ export class PonyfillBody<TJSON = any> implements Body {
       return new Proxy(_body.readable as any, {
         get(_, prop) {
           if (prop in ponyfillReadableStream) {
-            const ponyfillReadableStreamProp: any = ponyfillReadableStream[prop];
+            const ponyfillReadableStreamProp: any = (ponyfillReadableStream as any)[prop];
             if (typeof ponyfillReadableStreamProp === 'function') {
               return ponyfillReadableStreamProp.bind(ponyfillReadableStream);
             }
             return ponyfillReadableStreamProp;
           }
           if (prop in readable) {
-            const readableProp: any = readable[prop];
+            const readableProp: any = (readable as any)[prop];
             if (typeof readableProp === 'function') {
               return readableProp.bind(readable);
             }
@@ -101,73 +133,86 @@ export class PonyfillBody<TJSON = any> implements Body {
     return null;
   }
 
-  async arrayBuffer(): Promise<ArrayBuffer> {
-    if (this.bodyType === BodyInitType.ArrayBuffer) {
-      return this.bodyInit as ArrayBuffer;
-    }
-    if (this.bodyType === BodyInitType.Uint8Array || this.bodyType === BodyInitType.Buffer) {
-      const typedBodyInit = this.bodyInit as Uint8Array;
-      return uint8ArrayToArrayBuffer(typedBodyInit);
-    }
-    if (this.bodyType === BodyInitType.String) {
-      const buffer = Buffer.from(this.bodyInit as string);
-      return uint8ArrayToArrayBuffer(buffer);
-    }
-    if (this.bodyType === BodyInitType.Blob) {
-      const blob = this.bodyInit as PonyfillBlob;
-      const arrayBuffer = await blob.arrayBuffer();
-      return arrayBuffer;
-    }
-    const blob = await this.blob();
-    return blob.arrayBuffer();
-  }
+  _chunks: Uint8Array[] | null = null;
 
-  async _collectChunksFromReadable() {
-    const chunks: Uint8Array[] = [];
+  _collectChunksFromReadable() {
+    if (this._chunks) {
+      return fakePromise(this._chunks);
+    }
+    if (this.bodyType === BodyInitType.AsyncIterable) {
+      const iterator = (this.bodyInit as AsyncIterable<Uint8Array>)[Symbol.asyncIterator]();
+      const collectValue = (): Promise<Uint8Array[]> => {
+        return iterator.next().then(({ value, done }) => {
+          this._chunks ||= [];
+          if (value) {
+            this._chunks.push(value);
+          }
+          if (!done) {
+            return collectValue();
+          }
+          return this._chunks;
+        });
+      };
+      return collectValue();
+    }
     const _body = this.generateBody();
-    if (_body) {
-      for await (const chunk of _body.readable) {
-        chunks.push(chunk);
-      }
+    if (!_body) {
+      return fakePromise([]);
     }
-    return chunks;
-  }
-
-  async blob(): Promise<PonyfillBlob> {
-    if (this.bodyType === BodyInitType.Blob) {
-      return this.bodyInit as PonyfillBlob;
-    }
-    if (
-      this.bodyType === BodyInitType.String ||
-      this.bodyType === BodyInitType.Buffer ||
-      this.bodyType === BodyInitType.Uint8Array
-    ) {
-      const bodyInitTyped = this.bodyInit as string | Buffer | Uint8Array;
-      return new PonyfillBlob([bodyInitTyped], {
-        type: this.contentType || '',
+    this._chunks = [];
+    _body.readable.on('data', chunk => {
+      this._chunks!.push(chunk);
+    });
+    return new Promise<Uint8Array[]>((resolve, reject) => {
+      _body.readable.once('end', () => {
+        resolve(this._chunks!);
       });
-    }
-    if (this.bodyType === BodyInitType.ArrayBuffer) {
-      const bodyInitTyped = this.bodyInit as ArrayBuffer;
-      const buf = Buffer.from(bodyInitTyped, undefined, bodyInitTyped.byteLength);
-      return new PonyfillBlob([buf], {
-        type: this.contentType || '',
+      _body.readable.once('error', e => {
+        reject(e);
       });
-    }
-    const chunks = await this._collectChunksFromReadable();
-    return new PonyfillBlob(chunks, {
-      type: this.contentType || '',
     });
   }
 
-  formData(opts?: { formDataLimits: FormDataLimits }): Promise<PonyfillFormData> {
-    if (this.bodyType === BodyInitType.FormData) {
-      return Promise.resolve(this.bodyInit as PonyfillFormData);
+  _blob: PonyfillBlob | null = null;
+
+  blob(): Promise<PonyfillBlob> {
+    if (this._blob) {
+      return fakePromise(this._blob);
     }
-    const formData = new PonyfillFormData();
+    if (this.bodyType === BodyInitType.Blob) {
+      this._blob = this.bodyInit as PonyfillBlob;
+      return fakePromise(this._blob);
+    }
+    if (this._buffer) {
+      this._blob = new PonyfillBlob([this._buffer], {
+        type: this.contentType || '',
+        size: this.contentLength,
+      });
+      return fakePromise(this._blob);
+    }
+    return this._collectChunksFromReadable().then(chunks => {
+      this._blob = new PonyfillBlob(chunks, {
+        type: this.contentType || '',
+        size: this.contentLength,
+      });
+      return this._blob;
+    });
+  }
+
+  _formData: PonyfillFormData | null = null;
+
+  formData(opts?: { formDataLimits: FormDataLimits }): Promise<PonyfillFormData> {
+    if (this._formData) {
+      return fakePromise(this._formData);
+    }
+    if (this.bodyType === BodyInitType.FormData) {
+      this._formData = this.bodyInit as PonyfillFormData;
+      return fakePromise(this._formData);
+    }
+    this._formData = new PonyfillFormData();
     const _body = this.generateBody();
     if (_body == null) {
-      return Promise.resolve(formData);
+      return fakePromise(this._formData);
     }
     const formDataLimits = {
       ...this.options.formDataLimits,
@@ -188,7 +233,7 @@ export class PonyfillBody<TJSON = any> implements Body {
         if (valueTruncated) {
           reject(new Error(`Field value size exceeded: ${formDataLimits?.fieldSize} bytes`));
         }
-        formData.set(name, value);
+        this._formData!.set(name, value);
       });
       bb.on('fieldsLimit', () => {
         reject(new Error(`Fields limit exceeded: ${formDataLimits?.fields}`));
@@ -201,14 +246,14 @@ export class PonyfillBody<TJSON = any> implements Body {
             reject(new Error(`File size limit exceeded: ${formDataLimits?.fileSize} bytes`));
           });
           fileStream.on('data', chunk => {
-            chunks.push(Buffer.from(chunk));
+            chunks.push(chunk);
           });
           fileStream.on('close', () => {
             if (fileStream.truncated) {
               reject(new Error(`File size limit exceeded: ${formDataLimits?.fileSize} bytes`));
             }
             const file = new PonyfillFile(chunks, filename, { type: mimeType });
-            formData.set(name, file);
+            this._formData!.set(name, file);
           });
         },
       );
@@ -219,54 +264,93 @@ export class PonyfillBody<TJSON = any> implements Body {
         reject(new Error(`Parts limit exceeded: ${formDataLimits?.parts}`));
       });
       bb.on('close', () => {
-        resolve(formData);
+        resolve(this._formData!);
       });
-      bb.on('error', err => {
-        reject(err);
+      bb.on('error', (err: any = 'An error occurred while parsing the form data') => {
+        const errMessage = err.message || err.toString();
+        // @ts-ignore - `cause` is in `TypeError`in node
+        reject(new TypeError(errMessage, err.cause));
       });
       _body?.readable.pipe(bb);
     });
   }
 
-  async buffer(): Promise<Buffer> {
-    if (this.bodyType === BodyInitType.Buffer) {
-      return this.bodyInit as Buffer;
-    }
-    if (this.bodyType === BodyInitType.String) {
-      return Buffer.from(this.bodyInit as string);
-    }
-    if (this.bodyType === BodyInitType.Uint8Array || this.bodyType === BodyInitType.ArrayBuffer) {
-      const bodyInitTyped = this.bodyInit as Uint8Array | ArrayBuffer;
-      const buffer = Buffer.from(
-        bodyInitTyped,
-        'byteOffset' in bodyInitTyped ? bodyInitTyped.byteOffset : undefined,
-        bodyInitTyped.byteLength,
-      );
-      return buffer;
+  buffer(): Promise<Buffer> {
+    if (this._buffer) {
+      return fakePromise(this._buffer);
     }
     if (this.bodyType === BodyInitType.Blob) {
-      if (this.bodyInit instanceof PonyfillBlob) {
-        return this.bodyInit.buffer();
+      if (hasBufferMethod(this.bodyInit)) {
+        return this.bodyInit.buffer().then(buf => {
+          this._buffer = buf;
+          return this._buffer;
+        });
       }
-      const bodyInitTyped = this.bodyInit as Blob;
-      const buffer = Buffer.from(await bodyInitTyped.arrayBuffer(), undefined, bodyInitTyped.size);
-      return buffer;
+      if (hasBytesMethod(this.bodyInit)) {
+        return this.bodyInit.bytes().then(bytes => {
+          this._buffer = Buffer.from(bytes);
+          return this._buffer;
+        });
+      }
+      if (hasArrayBufferMethod(this.bodyInit)) {
+        return this.bodyInit.arrayBuffer().then(buf => {
+          this._buffer = Buffer.from(buf, undefined, buf.byteLength);
+          return this._buffer;
+        });
+      }
     }
-    const chunks = await this._collectChunksFromReadable();
-    return Buffer.concat(chunks);
+    return this._collectChunksFromReadable().then(chunks => {
+      if (chunks.length === 1) {
+        this._buffer = chunks[0] as Buffer;
+        return this._buffer;
+      }
+      this._buffer = Buffer.concat(chunks);
+      return this._buffer;
+    });
   }
 
-  async json(): Promise<TJSON> {
-    const text = await this.text();
-    return JSON.parse(text);
+  bytes(): Promise<Uint8Array> {
+    return this.buffer();
   }
 
-  async text(): Promise<string> {
+  arrayBuffer(): Promise<ArrayBuffer> {
+    // @ts-ignore - Mismatch between Buffer and ArrayBuffer
+    return this.buffer();
+  }
+
+  _json: TJSON | null = null;
+
+  json(): Promise<TJSON> {
+    if (this._json) {
+      return fakePromise(this._json);
+    }
+    return this.text().then(text => {
+      try {
+        this._json = JSON.parse(text);
+      } catch (e) {
+        if (e instanceof SyntaxError) {
+          e.message += `, "${text}" is not valid JSON`;
+        }
+        throw e;
+      }
+      return this._json!;
+    });
+  }
+
+  _text: string | null = null;
+
+  text(): Promise<string> {
+    if (this._text) {
+      return fakePromise(this._text);
+    }
     if (this.bodyType === BodyInitType.String) {
-      return this.bodyInit as string;
+      this._text = this.bodyInit as string;
+      return fakePromise(this._text);
     }
-    const buffer = await this.buffer();
-    return buffer.toString('utf-8');
+    return this.buffer().then(buffer => {
+      this._text = buffer.toString('utf-8');
+      return this._text;
+    });
   }
 }
 
@@ -274,6 +358,7 @@ function processBodyInit(bodyInit: BodyPonyfillInit | null): {
   bodyType?: BodyInitType;
   contentType: string | null;
   contentLength: number | null;
+  buffer?: Buffer;
   bodyFactory(): PonyfillReadableStream<Uint8Array> | null;
 } {
   if (bodyInit == null) {
@@ -284,17 +369,47 @@ function processBodyInit(bodyInit: BodyPonyfillInit | null): {
     };
   }
   if (typeof bodyInit === 'string') {
+    const buffer = Buffer.from(bodyInit);
+    const contentLength = buffer.byteLength;
     return {
       bodyType: BodyInitType.String,
       contentType: 'text/plain;charset=UTF-8',
-      contentLength: Buffer.byteLength(bodyInit),
+      contentLength,
+      buffer,
       bodyFactory() {
-        const readable = Readable.from(bodyInit);
+        const readable = Readable.from(buffer);
         return new PonyfillReadableStream<Uint8Array>(readable);
       },
     };
   }
-  if (bodyInit instanceof PonyfillReadableStream) {
+  if (Buffer.isBuffer(bodyInit)) {
+    return {
+      bodyType: BodyInitType.Buffer,
+      contentType: null,
+      contentLength: bodyInit.length,
+      buffer: bodyInit,
+      bodyFactory() {
+        const readable = Readable.from(bodyInit);
+        const body = new PonyfillReadableStream<Uint8Array>(readable);
+        return body;
+      },
+    };
+  }
+  if (isArrayBufferView(bodyInit)) {
+    const buffer = Buffer.from(bodyInit.buffer, bodyInit.byteOffset, bodyInit.byteLength);
+    return {
+      bodyType: BodyInitType.Buffer,
+      contentLength: bodyInit.byteLength,
+      contentType: null,
+      buffer,
+      bodyFactory() {
+        const readable = Readable.from(buffer);
+        const body = new PonyfillReadableStream<Uint8Array>(readable);
+        return body;
+      },
+    };
+  }
+  if (bodyInit instanceof PonyfillReadableStream && bodyInit.readable != null) {
     return {
       bodyType: BodyInitType.ReadableStream,
       bodyFactory: () => bodyInit,
@@ -302,63 +417,25 @@ function processBodyInit(bodyInit: BodyPonyfillInit | null): {
       contentLength: null,
     };
   }
-  if (bodyInit instanceof PonyfillBlob) {
+  if (isBlob(bodyInit)) {
     return {
       bodyType: BodyInitType.Blob,
       contentType: bodyInit.type,
       contentLength: bodyInit.size,
       bodyFactory() {
-        return bodyInit.stream();
-      },
-    };
-  }
-  if (bodyInit instanceof Buffer) {
-    const contentLength = bodyInit.length;
-    return {
-      bodyType: BodyInitType.Buffer,
-      contentLength,
-      contentType: null,
-      bodyFactory() {
-        const readable = Readable.from(bodyInit);
-        const body = new PonyfillReadableStream<Uint8Array>(readable);
-        return body;
-      },
-    };
-  }
-  if (bodyInit instanceof Uint8Array) {
-    const contentLength = bodyInit.byteLength;
-    return {
-      bodyType: BodyInitType.Uint8Array,
-      contentLength,
-      contentType: null,
-      bodyFactory() {
-        const readable = Readable.from(bodyInit);
-        const body = new PonyfillReadableStream<Uint8Array>(readable);
-        return body;
-      },
-    };
-  }
-  if ('buffer' in bodyInit) {
-    const contentLength = bodyInit.byteLength;
-    return {
-      contentLength,
-      contentType: null,
-      bodyFactory() {
-        const buffer = Buffer.from(bodyInit as Buffer);
-        const readable = Readable.from(buffer);
-        const body = new PonyfillReadableStream<Uint8Array>(readable);
-        return body;
+        return bodyInit.stream() as PonyfillReadableStream<Uint8Array>;
       },
     };
   }
   if (bodyInit instanceof ArrayBuffer) {
     const contentLength = bodyInit.byteLength;
+    const buffer = Buffer.from(bodyInit, undefined, bodyInit.byteLength);
     return {
-      bodyType: BodyInitType.ArrayBuffer,
+      bodyType: BodyInitType.Buffer,
       contentType: null,
       contentLength,
+      buffer,
       bodyFactory() {
-        const buffer = Buffer.from(bodyInit, undefined, bodyInit.byteLength);
         const readable = Readable.from(buffer);
         const body = new PonyfillReadableStream<Uint8Array>(readable);
         return body;
@@ -376,18 +453,7 @@ function processBodyInit(bodyInit: BodyPonyfillInit | null): {
       },
     };
   }
-  if ('stream' in bodyInit) {
-    return {
-      contentType: bodyInit.type,
-      contentLength: bodyInit.size,
-      bodyFactory() {
-        const bodyStream = bodyInit.stream();
-        const body = new PonyfillReadableStream<Uint8Array>(bodyStream);
-        return body;
-      },
-    };
-  }
-  if ('sort' in bodyInit) {
+  if (isURLSearchParams(bodyInit)) {
     const contentType = 'application/x-www-form-urlencoded;charset=UTF-8';
     return {
       bodyType: BodyInitType.String,
@@ -399,10 +465,11 @@ function processBodyInit(bodyInit: BodyPonyfillInit | null): {
       },
     };
   }
-  if ('forEach' in bodyInit) {
+  if (isFormData(bodyInit)) {
     const boundary = Math.random().toString(36).substr(2);
     const contentType = `multipart/form-data; boundary=${boundary}`;
     return {
+      bodyType: BodyInitType.FormData,
       contentType,
       contentLength: null,
       bodyFactory() {
@@ -411,10 +478,21 @@ function processBodyInit(bodyInit: BodyPonyfillInit | null): {
     };
   }
 
-  if (bodyInit[Symbol.iterator] || bodyInit[Symbol.asyncIterator]) {
+  if (isReadableStream(bodyInit)) {
     return {
       contentType: null,
       contentLength: null,
+      bodyFactory() {
+        return new PonyfillReadableStream(bodyInit);
+      },
+    };
+  }
+
+  if ((bodyInit as any)[Symbol.iterator] || (bodyInit as any)[Symbol.asyncIterator]) {
+    return {
+      contentType: null,
+      contentLength: null,
+      bodyType: BodyInitType.AsyncIterable,
       bodyFactory() {
         const readable = Readable.from(bodyInit);
         return new PonyfillReadableStream(readable);
@@ -423,4 +501,20 @@ function processBodyInit(bodyInit: BodyPonyfillInit | null): {
   }
 
   throw new Error('Unknown body type');
+}
+
+function isFormData(value: any): value is FormData {
+  return value?.forEach != null;
+}
+
+function isBlob(value: any): value is Blob {
+  return value?.stream != null;
+}
+
+function isURLSearchParams(value: any): value is URLSearchParams {
+  return value?.sort != null;
+}
+
+function isReadableStream(value: any): value is ReadableStream {
+  return value?.getReader != null;
 }

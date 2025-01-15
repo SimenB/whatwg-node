@@ -1,4 +1,4 @@
-import { join } from 'path';
+import { join } from 'node:path';
 import {
   assertDeployedEndpoint,
   DeploymentConfiguration,
@@ -53,12 +53,6 @@ export function createCfDeployment(
         ),
         module: isModule,
         name: stackName,
-        plainTextBindings: [
-          {
-            name: 'WORKER_PATH',
-            text: `/${stackName}`,
-          },
-        ],
       });
 
       // Create a nice route for easy testing

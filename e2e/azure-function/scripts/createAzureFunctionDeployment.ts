@@ -1,4 +1,4 @@
-import { join } from 'path';
+import { join } from 'node:path';
 import {
   assertDeployedEndpoint,
   DeploymentConfiguration,
@@ -115,7 +115,7 @@ export function createAzureFunctionDeployment(): DeploymentConfiguration<{
           resourceGroupName: resourceGroup.name,
           accountName: storageAccount.name,
           containerName: codeContainer.name,
-          source: new pulumi.asset.FileArchive(join(__dirname, '..', 'dist')),
+          source: new pulumi.asset.FileArchive(join(__dirname, '..')),
         },
         {
           deleteBeforeReplace: true,
@@ -150,13 +150,13 @@ export function createAzureFunctionDeployment(): DeploymentConfiguration<{
           siteConfig: {
             appSettings: [
               { name: 'AzureWebJobsStorage', value: storageConnectionString },
-              { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~3' },
+              { name: 'FUNCTIONS_EXTENSION_VERSION', value: '~4' },
               { name: 'FUNCTIONS_WORKER_RUNTIME', value: 'node' },
               { name: 'WEBSITE_RUN_FROM_PACKAGE', value: codeBlobUrl },
             ],
             http20Enabled: true,
             httpLoggingEnabled: true,
-            linuxFxVersion: 'node|14',
+            linuxFxVersion: 'node|20',
           },
         },
         {
