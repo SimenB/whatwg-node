@@ -76,3 +76,8 @@ junit.xml
 package-lock.json
 
 eslint_report.json
+
+deno.lock
+.helix/config.toml
+.helix/languages.toml
+.mise.toml

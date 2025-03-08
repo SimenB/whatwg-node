@@ -1,24 +1,42 @@
-import { join } from 'path';
-import { pathToFileURL } from 'url';
-import { fetchPonyfill } from '../src/fetch';
+import { Buffer } from 'node:buffer';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { describe, expect, it } from '@jest/globals';
+import { fetchPonyfill } from '../src/fetch.js';
 
-it('should respect file protocol', async () => {
-  const response = await fetchPonyfill(pathToFileURL(join(__dirname, './fixtures/test.json')));
-  expect(response.status).toBe(200);
-  const body = await response.json();
-  expect(body.foo).toBe('bar');
+describe('File protocol', () => {
+  it('reads', async () => {
+    const response = await fetchPonyfill(
+      pathToFileURL(join(process.cwd(), './packages/node-fetch/tests/fixtures/test.json')),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.foo).toBe('bar');
+  });
+  it('returns 404 if file does not exist', async () => {
+    const response = await fetchPonyfill(
+      pathToFileURL(join(process.cwd(), './packages/node-fetch/tests/fixtures/missing.json')),
+    );
+    expect(response.status).toBe(404);
+  });
+  it('returns 403 if file is not accessible', async () => {
+    const response = await fetchPonyfill(pathToFileURL('/root/private_data.txt'));
+    expect(response.status).toBe(403);
+  });
 });
 
 describe('data uris', () => {
   it('should accept base64-encoded gif data uri', async () => {
-    const b64 = 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=';
+    const mimeType = 'image/gif';
+    const base64Part = 'R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=';
+    const length = 35;
+    const b64 = `data:${mimeType};base64,${base64Part}`;
     const res = await fetchPonyfill(b64);
     expect(res.status).toBe(200);
-    expect(res.headers.get('Content-Type')).toBe('image/gif');
-    expect(res.headers.get('Content-Length')).toBe('35');
-    const buf = await res.arrayBuffer();
-    expect(buf.byteLength).toBe(35);
-    expect(buf).toBeInstanceOf(ArrayBuffer);
+    expect(res.headers.get('Content-Type')).toBe(mimeType);
+    expect(res.headers.get('Content-Length')).toBe(length.toString());
+    const buf = await res.bytes();
+    expect(Buffer.from(buf).toString('base64')).toBe(base64Part);
   });
   it('should accept data uri with specified charset', async () => {
     const r = await fetchPonyfill('data:text/plain;charset=UTF-8;page=21,the%20data:1234,5678');

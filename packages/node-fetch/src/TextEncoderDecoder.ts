@@ -1,3 +1,6 @@
+import { Buffer } from 'node:buffer';
+import { isArrayBufferView } from './utils.js';
+
 export class PonyfillTextEncoder implements TextEncoder {
   constructor(public encoding: BufferEncoding = 'utf-8') {}
 
@@ -18,14 +21,23 @@ export class PonyfillTextEncoder implements TextEncoder {
 export class PonyfillTextDecoder implements TextDecoder {
   fatal = false;
   ignoreBOM = false;
-  constructor(public encoding: BufferEncoding = 'utf-8', options: TextDecoderOptions) {
+  constructor(
+    public encoding: BufferEncoding = 'utf-8',
+    options?: TextDecoderOptions,
+  ) {
     if (options) {
       this.fatal = options.fatal || false;
       this.ignoreBOM = options.ignoreBOM || false;
     }
   }
 
-  decode(input: Uint8Array): string {
+  decode(input: BufferSource): string {
+    if (Buffer.isBuffer(input)) {
+      return input.toString(this.encoding);
+    }
+    if (isArrayBufferView(input)) {
+      return Buffer.from(input.buffer, input.byteOffset, input.byteLength).toString(this.encoding);
+    }
     return Buffer.from(input).toString(this.encoding);
   }
 }

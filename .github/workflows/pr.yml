@@ -1,28 +1,26 @@
-name: PR
+name: pr
 
 on:
   pull_request:
     branches:
       - master
 
-  workflow_dispatch:
-    inputs:
-      onDemand:
-        description: 'Are you sure?'
-        required: true
-        default: 'yes'
-      npmTag:
-        description: 'NPM Tag'
-        required: true
-        default: 'alpha'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   dependencies:
     uses: the-guild-org/shared-config/.github/workflows/changesets-dependencies.yaml@main
+    if: ${{ github.event.pull_request.title != 'Upcoming Release Changes' }}
     secrets:
       githubToken: ${{ secrets.GITHUB_TOKEN }}
 
   alpha:
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
     if:
       ${{ (github.event.pull_request.head.repo.full_name == github.repository ||
       github.event.inputs.onDemand == 'yes') && github.event.pull_request.title != 'Upcoming Release
@@ -31,12 +29,16 @@ jobs:
     with:
       npmTag: alpha
       buildScript: build
-      nodeVersion: 18
+      nodeVersion: 22
     secrets:
       githubToken: ${{ secrets.GITHUB_TOKEN }}
       npmToken: ${{ secrets.NODE_AUTH_TOKEN }}
 
   release-candidate:
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
     if:
       ${{ github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.title == 'Upcoming Release Changes' }}
@@ -44,7 +46,7 @@ jobs:
     with:
       npmTag: rc
       buildScript: build
-      nodeVersion: 18
+      nodeVersion: 22
       restoreDeletedChangesets: true
     secrets:
       githubToken: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@jest/globals": "./deno-jest.ts",
+    "@whatwg-node/fetch": "./packages/fetch/dist/esm-ponyfill.js"
+  }
+}

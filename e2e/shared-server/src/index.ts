@@ -1,42 +1,12 @@
-/* eslint-disable @typescript-eslint/ban-types */
-import { createRouter, Response, withErrorHandling } from '@whatwg-node/router';
+import { Response } from '@whatwg-node/fetch';
+import { createServerAdapter } from '@whatwg-node/server';
 
-export function createTestServerAdapter<TServerContext = {}>(base?: string) {
-  const app = createRouter<TServerContext>({
-    base,
-    plugins: [withErrorHandling as any],
-  });
-
-  app.get('/greetings/:name', req => Response.json({ message: `Hello ${req.params?.name}!` }));
-
-  app.post('/bye', async req => {
-    const { name } = await req.json();
-    return Response.json({ message: `Bye ${name}!` });
-  });
-
-  app.get(
-    '/',
-    () =>
-      new Response(
-        `
-    <html>
-        <head>
-            <title>Platform Agnostic Server</title>
-        </head>
-        <body>
-            <p>Hello World!</p>
-        </body>
-    </html>
-`,
-        {
-          headers: {
-            'Content-Type': 'text/html',
-          },
-        },
-      ),
+export const createTestServerAdapter = <TServerContext = {}>() =>
+  createServerAdapter<TServerContext>(async req =>
+    Response.json({
+      url: req.url,
+      method: req.method,
+      headers: Object.fromEntries(req.headers.entries()),
+      reqText: req.method === 'POST' ? await req.text() : '',
+    }),
   );
-
-  app.all('*', () => new Response('Not Found.', { status: 404 }));
-
-  return app;
-}

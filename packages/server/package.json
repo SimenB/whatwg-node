@@ -1,6 +1,7 @@
 {
   "name": "@whatwg-node/server",
-  "version": "0.6.7",
+  "version": "0.10.1",
+  "type": "module",
   "description": "Fetch API compliant HTTP Server adapter",
   "repository": {
     "type": "git",
@@ -9,36 +10,56 @@
   },
   "author": "Arda TANRIKULU <ardatanrikulu@gmail.com>",
   "license": "MIT",
-  "main": "dist/index.js",
-  "module": "dist/index.mjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
   "exports": {
     ".": {
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
+      "require": {
+        "types": "./dist/typings/index.d.cts",
+        "default": "./dist/cjs/index.js"
+      },
+      "import": {
+        "types": "./dist/typings/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "default": {
+        "types": "./dist/typings/index.d.ts",
+        "default": "./dist/esm/index.js"
+      }
     },
-    "./*": {
-      "require": "./dist/*.js",
-      "import": "./dist/*.mjs"
-    }
+    "./package.json": "./package.json"
   },
-  "typings": "dist/index.d.ts",
+  "typings": "dist/typings/index.d.ts",
   "dependencies": {
-    "@whatwg-node/fetch": "^0.8.1",
-    "tslib": "^2.3.1"
+    "@envelop/instrumentation": "^1.0.0",
+    "@whatwg-node/disposablestack": "^0.0.6",
+    "@whatwg-node/fetch": "^0.10.5",
+    "@whatwg-node/promise-helpers": "^1.2.3",
+    "tslib": "^2.6.3"
   },
   "devDependencies": {
-    "@types/node": "18.13.0",
-    "fastify": "4.13.0"
+    "@hapi/hapi": "^21.3.12",
+    "@types/express": "5.0.0",
+    "@types/koa": "^2.15.0",
+    "@types/node": "22.13.10",
+    "express": "4.21.2",
+    "fastify": "5.2.1",
+    "koa": "^2.15.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
   },
   "publishConfig": {
-    "access": "public",
-    "directory": "dist"
+    "directory": "dist",
+    "access": "public"
   },
   "sideEffects": false,
   "buildOptions": {
     "input": "./src/index.ts"
   },
   "typescript": {
-    "definition": "dist/index.d.ts"
+    "definition": "dist/typings/index.d.ts"
   }
 }

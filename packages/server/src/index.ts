@@ -1,6 +1,11 @@
-export * from './createServerAdapter';
-export * from './types';
-export * from './utils';
-export * from './middlewares/withCors';
-export * from './middlewares/withErrorHandling';
+export * from './createServerAdapter.js';
+export * from './types.js';
+export * from './utils.js';
+export * from './plugins/types.js';
+export * from './plugins/useCors.js';
+export * from './plugins/useErrorHandling.js';
+export * from './plugins/useContentEncoding.js';
+export * from './uwebsockets.js';
 export { Response } from '@whatwg-node/fetch';
+export { DisposableSymbols } from '@whatwg-node/disposablestack';
+export * from '@envelop/instrumentation';

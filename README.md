@@ -33,15 +33,6 @@ etc. For Node.js, it transpiles Node.js specific APIs to the standard ones, and 
 environments, it uses the standard APIs directly. Even if your environment doesn't use Fetch API for
 the server implementation, you can still use `fetch` method to handle requests.
 
-### [@whatwg-node/router](./packages/router)
-
-A platform-independent JavaScript HTTP router that uses the
-[URL Standard](https://url.spec.whatwg.org/) and [Fetch Standard](https://fetch.spec.whatwg.org/) to
-match requests to handlers. The HTTP router implemented with this library can be used in any JS
-environment like Node.js, Deno, Cloudflare Workers, Bun, etc. It uses
-[@whatwg-node/server](./packages/server) and
-[URLPattern](https://developer.mozilla.org/en-US/docs/Web/API/URLPattern) specifically.
-
 ### [fetchache](./packages/fetchache)
 
 A fetch wrapper that allows you to respect HTTP caching strategies on non-browser environments with

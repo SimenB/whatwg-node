@@ -1,10 +1,14 @@
-import { PonyfillBlob } from './Blob';
-import { PonyfillFile } from './File';
-import { PonyfillReadableStream } from './ReadableStream';
+import { Buffer } from 'node:buffer';
+import { PonyfillBlob } from './Blob.js';
+import { PonyfillFile } from './File.js';
+import { PonyfillIteratorObject } from './IteratorObject.js';
+import { PonyfillReadableStream } from './ReadableStream.js';
 
 export class PonyfillFormData implements FormData {
   private map = new Map<string, FormDataEntryValue[]>();
 
+  append(name: string, value: string): void;
+  append(name: string, value: PonyfillBlob, fileName?: string): void;
   append(name: string, value: PonyfillBlob | string, fileName?: string): void {
     let values = this.map.get(name);
     if (!values) {
@@ -34,6 +38,8 @@ export class PonyfillFormData implements FormData {
     return this.map.has(name);
   }
 
+  set(name: string, value: string): void;
+  set(name: string, value: PonyfillBlob, fileName?: string): void;
   set(name: string, value: PonyfillBlob | string, fileName?: string): void {
     const entry: FormDataEntryValue = isBlob(value)
       ? getNormalizedFile(name, value, fileName)
@@ -41,12 +47,40 @@ export class PonyfillFormData implements FormData {
     this.map.set(name, [entry]);
   }
 
-  *[Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]> {
+  [Symbol.iterator](): FormDataIterator<[string, FormDataEntryValue]> {
+    return this._entries();
+  }
+
+  *_entries(): FormDataIterator<[string, FormDataEntryValue]> {
     for (const [key, values] of this.map) {
       for (const value of values) {
         yield [key, value];
       }
     }
+  }
+
+  entries(): FormDataIterator<[string, FormDataEntryValue]> {
+    return new PonyfillIteratorObject(this._entries(), 'FormDataIterator');
+  }
+
+  _keys(): IterableIterator<string> {
+    return this.map.keys();
+  }
+
+  keys(): FormDataIterator<string> {
+    return new PonyfillIteratorObject(this._keys(), 'FormDataIterator');
+  }
+
+  *_values(): IterableIterator<FormDataEntryValue> {
+    for (const values of this.map.values()) {
+      for (const value of values) {
+        yield value;
+      }
+    }
+  }
+
+  values(): FormDataIterator<FormDataEntryValue> {
+    return new PonyfillIteratorObject(this._values(), 'FormDataIterator');
   }
 
   forEach(callback: (value: FormDataEntryValue, key: string, parent: this) => void): void {
@@ -114,18 +148,14 @@ export function getStreamFromFormData(
 }
 
 function getNormalizedFile(name: string, blob: PonyfillBlob, fileName?: string) {
-  if (blob instanceof PonyfillFile) {
-    if (fileName != null) {
-      return new PonyfillFile([blob], fileName, {
-        type: blob.type,
-        lastModified: blob.lastModified,
-      });
-    }
-    return blob;
-  }
-  return new PonyfillFile([blob], fileName || name, { type: blob.type });
+  Object.defineProperty(blob as PonyfillFile, 'name', {
+    configurable: true,
+    enumerable: true,
+    value: fileName || blob.name || name,
+  });
+  return blob as PonyfillFile;
 }
 
 function isBlob(value: any): value is PonyfillBlob {
-  return value != null && typeof value === 'object' && typeof value.arrayBuffer === 'function';
+  return value?.arrayBuffer != null;
 }
